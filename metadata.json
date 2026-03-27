@@ -1,0 +1,5 @@
+{
+  "name": "haku 3d viewer",
+  "description": "A comprehensive protein structure database integrating PDBe, AlphaFold, and 3D-Beacons.",
+  "requestFramePermissions": []
+}

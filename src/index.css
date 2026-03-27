@@ -1,0 +1,17 @@
+@import "tailwindcss";
+@import "pdbe-molstar/build/pdbe-molstar.css";
+
+html {
+  font-size: 110%;
+}
+
+:root {
+  --bg: #f8f9fa;
+  --ink: #1a1a1a;
+  --line: #dee2e6;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--ink);
+}
