@@ -55,9 +55,10 @@ export const MolStarViewer: React.FC<MolStarViewerProps> = ({
       const data: any[] = [];
       const isPdb = provider?.toLowerCase().includes('pdb');
 
-      // 1. Base Grey and Query Blue - ONLY for PDB structures
-      // For AlphaFold and others, we want to keep the default coloring (e.g. pLDDT)
+      // Only apply custom coloring and selections to PDB structures
+      // For AlphaFold DB and 3D-Beacons models, we keep the default coloring (e.g. pLDDT)
       if (isPdb) {
+        // 1. Base Grey and Query Blue
         // Base Grey for everything
         data.push({
           struct_asym_id: undefined, 
@@ -82,7 +83,6 @@ export const MolStarViewer: React.FC<MolStarViewerProps> = ({
             });
           } else {
             // If query is a base ID, also highlight common isoforms
-            // This ensures Q16531-2 is colored when Q16531 is selected
             ['-1', '-2', '-3', '-4', '-5'].forEach(suffix => {
               data.push({
                 uniprot_accession: uniprotId + suffix,
@@ -97,91 +97,80 @@ export const MolStarViewer: React.FC<MolStarViewerProps> = ({
             color: { r: 37, g: 99, b: 235 },
           });
         }
-      }
 
-      // 2. Highlight Variant Red (Always apply)
-      if (highlightPosition) {
-        const highlight: any = {
-          color: { r: 220, g: 38, b: 38 },
-          focus: true,
-          sideChain: true,
-        };
+        // 2. Highlight Variant Red
+        if (highlightPosition) {
+          const highlight: any = {
+            color: { r: 220, g: 38, b: 38 },
+            focus: true,
+            sideChain: true,
+          };
 
-        if (uniprotId) {
-          // ALWAYS prefer UniProt mapping for selection/zoom
-          // This fixes issues where structure numbering (e.g. 4GGC) differs from UniProt
-          highlight.uniprot_accession = uniprotId;
-          highlight.uniprot_residue_number = highlightPosition;
-          data.push(highlight);
-          
-          // Handle isoforms for variant
-          if (uniprotId.includes('-')) {
-            data.push({
-              ...highlight,
-              uniprot_accession: uniprotId.split('-')[0],
-              focus: false, // Don't focus twice
-            });
+          if (uniprotId) {
+            highlight.uniprot_accession = uniprotId;
+            highlight.uniprot_residue_number = highlightPosition;
+            data.push(highlight);
+            
+            if (uniprotId.includes('-')) {
+              data.push({
+                ...highlight,
+                uniprot_accession: uniprotId.split('-')[0],
+                focus: false,
+              });
+            }
+          } else {
+            highlight.residue_number = highlightPosition;
+            data.push(highlight);
           }
-        } else {
-          // Fallback only if no UniProt ID is available
-          highlight.residue_number = highlightPosition;
-          data.push(highlight);
         }
-      }
 
-      // 3. Highlight Binder (Always apply)
-      if (selectedBinder) {
-        const binderHighlight: any = {
-          color: { r: 16, g: 185, b: 129 }, // Emerald Green
-          focus: true,
-        };
+        // 3. Highlight Binder
+        if (selectedBinder) {
+          const binderHighlight: any = {
+            color: { r: 16, g: 185, b: 129 }, // Emerald Green
+            focus: true,
+          };
 
-        if (selectedBinder.category === 'ligand') {
-          binderHighlight.label_comp_id = selectedBinder.id;
-          data.push(binderHighlight);
-        } else if (selectedBinder.category === 'protein' || selectedBinder.category === 'antibody') {
-          // 1. Try to highlight by entity_id (most precise)
-          if (selectedBinder.entityId) {
-            data.push({
-              ...binderHighlight,
-              entity_id: String(selectedBinder.entityId)
-            });
-          }
-
-          // 2. Try to highlight by the specific UniProt ID (e.g., Q16531-2)
-          data.push({
-            ...binderHighlight,
-            uniprot_accession: selectedBinder.id,
-            focus: !selectedBinder.entityId // Only focus if entityId didn't already
-          });
-          
-          // 3. If it's an isoform, also try to highlight the base ID
-          if (selectedBinder.id.includes('-')) {
-            const baseId = selectedBinder.id.split('-')[0];
-            data.push({
-              ...binderHighlight,
-              uniprot_accession: baseId,
-              focus: false
-            });
-          } else {
-            // 4. If it's a base ID, try to highlight potential isoforms (wildcard-like)
-            // PDBe Molstar doesn't support wildcards directly, but we can try common patterns
-            // or just rely on the fact that many structures map isoforms to the base ID anyway.
-            // For now, let's just ensure the base ID is tried.
-          }
-        } else {
-          // DNA/RNA/Other
-          if (selectedBinder.entityId) {
-            binderHighlight.entity_id = String(selectedBinder.entityId);
-          } else {
+          if (selectedBinder.category === 'ligand') {
             binderHighlight.label_comp_id = selectedBinder.id;
+            data.push(binderHighlight);
+          } else if (selectedBinder.category === 'protein' || selectedBinder.category === 'antibody') {
+            if (selectedBinder.entityId) {
+              data.push({
+                ...binderHighlight,
+                entity_id: String(selectedBinder.entityId)
+              });
+            }
+
+            data.push({
+              ...binderHighlight,
+              uniprot_accession: selectedBinder.id,
+              focus: !selectedBinder.entityId
+            });
+            
+            if (selectedBinder.id.includes('-')) {
+              const baseId = selectedBinder.id.split('-')[0];
+              data.push({
+                ...binderHighlight,
+                uniprot_accession: baseId,
+                focus: false
+              });
+            }
+          } else {
+            if (selectedBinder.entityId) {
+              binderHighlight.entity_id = String(selectedBinder.entityId);
+            } else {
+              binderHighlight.label_comp_id = selectedBinder.id;
+            }
+            data.push(binderHighlight);
           }
-          data.push(binderHighlight);
         }
       }
 
       pluginInstance.current.visual.clearSelection();
-      pluginInstance.current.visual.select({ data });
+      if (data.length > 0) {
+        pluginInstance.current.visual.select({ data });
+      }
     } catch (error) {
       console.error('Error updating MolStar visual state:', error);
     }
