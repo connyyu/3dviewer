@@ -130,6 +130,7 @@ export default function App() {
     setDiseaseFilter('all');
     setBinderIdFilter('all');
     setSelectedVariant(null);
+    setSelectedBinder(null);
     
     const [structureData, variantData] = await Promise.all([
       getStructures(protein.uniprotId),
@@ -369,7 +370,11 @@ export default function App() {
                         return (
                           <div key={`${s.modelId}-${idx}`} className="relative group/item">
                             <button
-                              onClick={() => setSelectedStructure(s)}
+                              onClick={() => {
+                                setSelectedStructure(s);
+                                setSelectedVariant(null);
+                                setSelectedBinder(null);
+                              }}
                               className={cn(
                                 "w-full text-left p-3 border border-[#141414] transition-all group relative overflow-hidden",
                                 selectedStructure?.modelId === s.modelId ? "bg-[#141414] text-white" : "hover:bg-[#141414]/5"
