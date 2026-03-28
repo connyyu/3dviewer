@@ -3,6 +3,8 @@ import React, { useEffect, useRef } from 'react';
 import { PDBeMolstarPlugin } from 'pdbe-molstar/lib/viewer';
 import 'pdbe-molstar/build/pdbe-molstar-light.css';
 
+import { Binder } from '../types';
+
 interface MolStarViewerProps {
   url: string;
   format: string;
@@ -11,6 +13,7 @@ interface MolStarViewerProps {
   uniprotStart?: number;
   uniprotEnd?: number;
   highlightPosition?: number;
+  selectedBinder?: Binder | null;
   onSelectResidue?: (position: number | null) => void;
   className?: string;
 }
@@ -23,6 +26,7 @@ export const MolStarViewer: React.FC<MolStarViewerProps> = ({
   uniprotStart,
   uniprotEnd,
   highlightPosition, 
+  selectedBinder,
   onSelectResidue,
   className 
 }) => {
@@ -68,6 +72,24 @@ export const MolStarViewer: React.FC<MolStarViewerProps> = ({
             uniprot_accession: uniprotId,
             color: { r: 37, g: 99, b: 235 },
           });
+          
+          // Handle isoforms for query protein
+          if (uniprotId.includes('-')) {
+            // If query is an isoform, also highlight the base ID
+            data.push({
+              uniprot_accession: uniprotId.split('-')[0],
+              color: { r: 37, g: 99, b: 235 },
+            });
+          } else {
+            // If query is a base ID, also highlight common isoforms
+            // This ensures Q16531-2 is colored when Q16531 is selected
+            ['-1', '-2', '-3', '-4', '-5'].forEach(suffix => {
+              data.push({
+                uniprot_accession: uniprotId + suffix,
+                color: { r: 37, g: 99, b: 235 },
+              });
+            });
+          }
         } else if (uniprotStart && uniprotEnd) {
           data.push({
             start_residue_number: 1,
@@ -90,12 +112,72 @@ export const MolStarViewer: React.FC<MolStarViewerProps> = ({
           // This fixes issues where structure numbering (e.g. 4GGC) differs from UniProt
           highlight.uniprot_accession = uniprotId;
           highlight.uniprot_residue_number = highlightPosition;
+          data.push(highlight);
+          
+          // Handle isoforms for variant
+          if (uniprotId.includes('-')) {
+            data.push({
+              ...highlight,
+              uniprot_accession: uniprotId.split('-')[0],
+              focus: false, // Don't focus twice
+            });
+          }
         } else {
           // Fallback only if no UniProt ID is available
           highlight.residue_number = highlightPosition;
+          data.push(highlight);
         }
+      }
 
-        data.push(highlight);
+      // 3. Highlight Binder (Always apply)
+      if (selectedBinder) {
+        const binderHighlight: any = {
+          color: { r: 16, g: 185, b: 129 }, // Emerald Green
+          focus: true,
+        };
+
+        if (selectedBinder.category === 'ligand') {
+          binderHighlight.label_comp_id = selectedBinder.id;
+          data.push(binderHighlight);
+        } else if (selectedBinder.category === 'protein' || selectedBinder.category === 'antibody') {
+          // 1. Try to highlight by entity_id (most precise)
+          if (selectedBinder.entityId) {
+            data.push({
+              ...binderHighlight,
+              entity_id: String(selectedBinder.entityId)
+            });
+          }
+
+          // 2. Try to highlight by the specific UniProt ID (e.g., Q16531-2)
+          data.push({
+            ...binderHighlight,
+            uniprot_accession: selectedBinder.id,
+            focus: !selectedBinder.entityId // Only focus if entityId didn't already
+          });
+          
+          // 3. If it's an isoform, also try to highlight the base ID
+          if (selectedBinder.id.includes('-')) {
+            const baseId = selectedBinder.id.split('-')[0];
+            data.push({
+              ...binderHighlight,
+              uniprot_accession: baseId,
+              focus: false
+            });
+          } else {
+            // 4. If it's a base ID, try to highlight potential isoforms (wildcard-like)
+            // PDBe Molstar doesn't support wildcards directly, but we can try common patterns
+            // or just rely on the fact that many structures map isoforms to the base ID anyway.
+            // For now, let's just ensure the base ID is tried.
+          }
+        } else {
+          // DNA/RNA/Other
+          if (selectedBinder.entityId) {
+            binderHighlight.entity_id = String(selectedBinder.entityId);
+          } else {
+            binderHighlight.label_comp_id = selectedBinder.id;
+          }
+          data.push(binderHighlight);
+        }
       }
 
       pluginInstance.current.visual.clearSelection();
@@ -214,7 +296,7 @@ export const MolStarViewer: React.FC<MolStarViewerProps> = ({
 
   useEffect(() => {
     applyVisualState();
-  }, [highlightPosition, uniprotId, uniprotStart, uniprotEnd, provider]);
+  }, [highlightPosition, selectedBinder, uniprotId, uniprotStart, uniprotEnd, provider]);
 
   return (
     <div 

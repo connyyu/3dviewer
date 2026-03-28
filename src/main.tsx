@@ -1,39 +1,66 @@
 import {StrictMode} from 'react';
-import {createRoot} from 'react-dom/client';
+import {createRoot, Root} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 
-const container = document.getElementById('root');
+const rootKey = '__HAKU_REACT_ROOT__';
 
-if (container) {
-  // Use a global key to persist the root across re-executions.
-  const rootKey = '__HAKU_3D_REACT_ROOT__';
-  let root = (window as any)[rootKey];
-  
-  if (root) {
-    console.debug('main.tsx: Reusing existing React root from window');
-  } else {
-    // If we don't have the root object but the container is already "tainted" 
-    // by a previous React initialization, createRoot will throw an error.
-    // We detect this by checking for React-internal properties on the DOM node.
-    const isTainted = Object.keys(container).some(k => k.startsWith('__reactContainer$'));
-    
-    if (isTainted) {
-      console.debug('main.tsx: Container is tainted, replacing with a fresh node');
+function initializeRoot() {
+  const container = document.getElementById('root');
+  if (!container) return;
+
+  // 1. Try to get existing root from window or container
+  let root: Root | undefined = (window as any)[rootKey] || (container as any)[rootKey];
+
+  // 2. Detect if the node is already a React root by checking internal properties
+  // React 18+ attaches a property starting with __reactContainer to the DOM node
+  const isReactOwned = Object.keys(container).some(key => key.startsWith('__reactContainer'));
+
+  if (!root) {
+    if (isReactOwned) {
+      console.warn('React root already exists on container but reference is lost. Forcing recovery by replacing container...');
       const newContainer = container.cloneNode(false) as HTMLElement;
       container.parentNode?.replaceChild(newContainer, container);
-      root = createRoot(newContainer);
+      
+      try {
+        root = createRoot(newContainer);
+        (window as any)[rootKey] = root;
+        (newContainer as any)[rootKey] = root;
+      } catch (innerError) {
+        console.error('Recovery failed:', innerError);
+      }
     } else {
-      console.debug('main.tsx: Creating new React root');
-      root = createRoot(container);
+      try {
+        root = createRoot(container);
+        (window as any)[rootKey] = root;
+        (container as any)[rootKey] = root;
+      } catch (e: any) {
+        if (e.message?.includes('already been passed to createRoot')) {
+          console.warn('Caught createRoot error. Attempting forced container replacement...');
+          const newContainer = container.cloneNode(false) as HTMLElement;
+          container.parentNode?.replaceChild(newContainer, container);
+          
+          try {
+            root = createRoot(newContainer);
+            (window as any)[rootKey] = root;
+            (newContainer as any)[rootKey] = root;
+          } catch (innerError) {
+            console.error('Forced recovery failed:', innerError);
+          }
+        } else {
+          throw e;
+        }
+      }
     }
-    
-    (window as any)[rootKey] = root;
   }
-  
-  root.render(
-    <StrictMode>
-      <App />
-    </StrictMode>,
-  );
+
+  if (root) {
+    root.render(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+    );
+  }
 }
+
+initializeRoot();

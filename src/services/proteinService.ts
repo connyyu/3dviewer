@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { ProteinSummary, StructureModel, Variant } from '../types';
+import { Binder, ProteinSummary, StructureModel, Variant } from '../types';
 
 const BEACONS_API = 'https://www.ebi.ac.uk/pdbe/pdbe-kb/3dbeacons/api/v2/uniprot/summary';
 const UNIPROT_API = 'https://rest.uniprot.org/uniprotkb';
@@ -114,4 +114,169 @@ export async function getVariants(uniprotId: string): Promise<Variant[]> {
     console.error('Proteins API error:', error);
     return [];
   }
+}
+
+export async function getBinders(pdbIds: string[], queryUniprot?: string): Promise<Binder[]> {
+  const binders: Binder[] = [];
+
+  // Limit to first 15 PDBs to avoid overwhelming the browser/API
+  const limitedPdbIds = pdbIds.slice(0, 15);
+
+  const fetchForPdb = async (pdbId: string) => {
+    const id = pdbId.toLowerCase();
+    const seenInThisPdb = new Set<string>();
+    try {
+      const [ligandsRes, moleculesRes, mappingsRes] = await Promise.all([
+        axios.get(`https://www.ebi.ac.uk/pdbe/api/pdb/entry/ligand_monomers/${id}`).catch(() => ({ data: {} })),
+        axios.get(`https://www.ebi.ac.uk/pdbe/api/pdb/entry/molecules/${id}`).catch(() => ({ data: {} })),
+        axios.get(`https://www.ebi.ac.uk/pdbe/api/mappings/uniprot/${id}`).catch(() => ({ data: {} }))
+      ]);
+
+      // Create a map of entity_id to UniProt ID and Name from mappings API
+      const entityToUniprot: Record<number, string> = {};
+      const entityToUniprotName: Record<number, string> = {};
+      const pdbMappings = mappingsRes.data[id]?.UniProt || {};
+      Object.entries(pdbMappings).forEach(([uniprotId, mapping]: [string, any]) => {
+        if (mapping.mappings) {
+          mapping.mappings.forEach((m: any) => {
+            if (m.entity_id) {
+              entityToUniprot[m.entity_id] = uniprotId;
+              if (mapping.name) {
+                entityToUniprotName[m.entity_id] = mapping.name;
+              }
+            }
+          });
+        }
+      });
+
+      const ligands = ligandsRes.data[id] || [];
+      ligands.forEach((l: any) => {
+        const key = `${l.chem_comp_id}_ligand`;
+        if (!seenInThisPdb.has(key)) {
+          binders.push({
+            id: l.chem_comp_id,
+            name: l.chem_comp_name,
+            category: 'ligand',
+            pdbId: pdbId
+          });
+          seenInThisPdb.add(key);
+        }
+      });
+
+      const molecules = moleculesRes.data[id] || [];
+      molecules.forEach((m: any) => {
+        // molecule_name and description are often arrays in PDBe API
+        const rawName = m.molecule_name || m.description || '';
+        const molName = Array.isArray(rawName) ? rawName.join(', ') : String(rawName);
+        const molNameLower = molName.toLowerCase();
+        const molType = (m.molecule_type || '').toLowerCase();
+        
+        if (molType.includes('protein') || molType.includes('polypeptide')) {
+          const uniprot = m.uniprot_accession?.[0] || 
+                          m.uniprot_id?.[0] || 
+                          m.source?.[0]?.uniprot_id ||
+                          m.source?.[0]?.accession ||
+                          entityToUniprot[m.entity_id];
+          
+          // Filter out the query protein itself (including isoforms)
+          const isQueryProtein = uniprot === queryUniprot || 
+                                (uniprot && queryUniprot && uniprot.split('-')[0] === queryUniprot.split('-')[0]);
+          
+          if (uniprot && !isQueryProtein) {
+            const isAntibody = molNameLower.includes('antibody') || 
+                               molNameLower.includes('fab fragment') || 
+                               molNameLower.includes('igg') || 
+                               molNameLower.includes('scfv');
+            const category = isAntibody ? 'antibody' : 'protein';
+            const key = `${uniprot}_${category}`;
+            
+            if (!seenInThisPdb.has(key)) {
+              let symbol = m.gene_name?.[0] || m.source?.[0]?.gene_name?.[0];
+              if (!symbol && entityToUniprotName[m.entity_id]) {
+                // Extract gene name from UniProt name (e.g., NEDD8_HUMAN -> NEDD8)
+                symbol = entityToUniprotName[m.entity_id].split('_')[0];
+              }
+              
+              const source = m.source?.[0] || {};
+              let organism = source.organism_common_name || source.organism_scientific_name;
+              
+              if (organism) {
+                const speciesMap: Record<string, string> = {
+                  'homo sapiens': 'HUMAN',
+                  'mus musculus': 'MOUSE',
+                  'rattus norvegicus': 'RAT',
+                  'bos taurus': 'BOVINE',
+                  'sus scrofa': 'PIG',
+                  'danio rerio': 'ZEBRAFISH',
+                  'drosophila melanogaster': 'FRUIT FLY',
+                  'caenorhabditis elegans': 'NEMATODE',
+                  'saccharomyces cerevisiae': 'YEAST',
+                  'escherichia coli': 'E. COLI',
+                  'arabidopsis thaliana': 'THALE CRESS',
+                  'xenopus laevis': 'FROG',
+                  'oryctolagus cuniculus': 'RABBIT',
+                  'gallus gallus': 'CHICKEN'
+                };
+                const lowerOrg = organism.toLowerCase();
+                if (speciesMap[lowerOrg]) {
+                  organism = speciesMap[lowerOrg];
+                }
+              }
+              
+              binders.push({
+                id: uniprot,
+                name: molName,
+                symbol: symbol,
+                organism: organism,
+                category: category,
+                pdbId: pdbId,
+                entityId: m.entity_id
+              });
+              seenInThisPdb.add(key);
+            }
+          }
+        } else if (
+          molNameLower.includes('dna') || 
+          molType.includes('dna') || 
+          molNameLower.includes('polydeoxyribonucleotide') ||
+          molType.includes('polydeoxyribonucleotide')
+        ) {
+          const key = `${molName}_dna`;
+          if (!seenInThisPdb.has(key)) {
+            binders.push({
+              id: `DNA_${m.entity_id}`,
+              name: molName,
+              category: 'dna',
+              pdbId: pdbId,
+              entityId: m.entity_id
+            });
+            seenInThisPdb.add(key);
+          }
+        } else if (
+          molNameLower.includes('rna') || 
+          molType.includes('rna') || 
+          molNameLower.includes('polyribonucleotide') ||
+          molType.includes('polyribonucleotide')
+        ) {
+          const key = `${molName}_rna`;
+          if (!seenInThisPdb.has(key)) {
+            binders.push({
+              id: `RNA_${m.entity_id}`,
+              name: molName,
+              category: 'rna',
+              pdbId: pdbId,
+              entityId: m.entity_id
+            });
+            seenInThisPdb.add(key);
+          }
+        }
+      });
+    } catch (e) {
+      console.error(`Error fetching binders for ${pdbId}:`, e);
+    }
+  };
+
+  await Promise.all(limitedPdbIds.map(fetchForPdb));
+  
+  return binders;
 }

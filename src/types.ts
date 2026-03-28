@@ -10,6 +10,16 @@ export interface Variant {
   source?: string;
 }
 
+export interface Binder {
+  id: string;
+  name: string;
+  symbol?: string;
+  organism?: string;
+  category: 'ligand' | 'protein' | 'dna' | 'rna' | 'antibody' | 'other';
+  pdbId: string;
+  entityId?: number;
+}
+
 export interface ProteinSummary {
   uniprotId: string;
   symbol?: string;

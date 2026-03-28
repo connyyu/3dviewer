@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Database, Box, Info, ExternalLink, ChevronRight, Loader2, Dna, Activity, PanelLeft, PanelRight } from 'lucide-react';
-import { searchUniProt, getStructures, getVariants } from './services/proteinService';
-import { ProteinSummary, StructureModel, Variant } from './types';
+import { Search, Database, Box, Info, ExternalLink, ChevronRight, Loader2, Dna, Activity, PanelLeft, PanelRight, Layers } from 'lucide-react';
+import { searchUniProt, getStructures, getVariants, getBinders } from './services/proteinService';
+import { Binder, ProteinSummary, StructureModel, Variant } from './types';
 import { MolStarViewer } from './components/MolStarViewer';
 import { SequenceSchematic } from './components/SequenceSchematic';
 import { cn } from './lib/utils';
@@ -82,6 +82,11 @@ export default function App() {
   const [selectedStructure, setSelectedStructure] = useState<StructureModel | null>(null);
   const [variants, setVariants] = useState<Variant[]>([]);
   const [diseaseFilter, setDiseaseFilter] = useState<string>('all');
+  const [binders, setBinders] = useState<Binder[]>([]);
+  const [binderFilter, setBinderFilter] = useState<string>('protein');
+  const [binderIdFilter, setBinderIdFilter] = useState<string>('all');
+  const [selectedBinder, setSelectedBinder] = useState<Binder | null>(null);
+  const [rightPanelType, setRightPanelType] = useState<'variants' | 'binders'>('binders');
   const [selectedVariant, setSelectedVariant] = useState<Variant | null>(null);
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
@@ -121,7 +126,9 @@ export default function App() {
     setSelectedProtein(protein);
     setLoading(true);
     setVariants([]);
+    setBinders([]);
     setDiseaseFilter('all');
+    setBinderIdFilter('all');
     setSelectedVariant(null);
     
     const [structureData, variantData] = await Promise.all([
@@ -163,6 +170,24 @@ export default function App() {
 
     if (sortedStructures.length > 0) {
       setSelectedStructure(sortedStructures[0]);
+      
+      // Fetch binders for PDB structures
+      const pdbIds = sortedStructures
+        .filter(s => s.provider?.toLowerCase().includes('pdb'))
+        .map(s => s.modelId);
+      
+      if (pdbIds.length > 0) {
+        const binderData = await getBinders(pdbIds, protein.uniprotId);
+        setBinders(binderData);
+
+        // Set default filter based on priority: protein > ligand > dna > rna
+        const categories = new Set(binderData.map(b => b.category));
+        if (categories.has('protein')) setBinderFilter('protein');
+        else if (categories.has('ligand')) setBinderFilter('ligand');
+        else if (categories.has('dna')) setBinderFilter('dna');
+        else if (categories.has('rna')) setBinderFilter('rna');
+        else if (binderData.length > 0) setBinderFilter(binderData[0].category);
+      }
     } else {
       setSelectedStructure(null);
     }
@@ -216,6 +241,31 @@ export default function App() {
             </div>
           )}
         </form>
+
+        <div className="flex items-center gap-2 ml-2">
+          <button 
+            onClick={() => setRightPanelType('binders')}
+            className={cn(
+              "p-2 border border-[#141414] transition-colors flex items-center gap-2 text-xs font-bold uppercase",
+              rightPanelType === 'binders' ? "bg-[#141414] text-white" : "bg-white hover:bg-gray-100"
+            )}
+            title="Show Binders"
+          >
+            <Layers className="w-4 h-4" />
+            <span className="hidden xl:inline">Binders</span>
+          </button>
+          <button 
+            onClick={() => setRightPanelType('variants')}
+            className={cn(
+              "p-2 border border-[#141414] transition-colors flex items-center gap-2 text-xs font-bold uppercase",
+              rightPanelType === 'variants' ? "bg-[#141414] text-white" : "bg-white hover:bg-gray-100"
+            )}
+            title="Show Variants"
+          >
+            <Activity className="w-4 h-4" />
+            <span className="hidden xl:inline">Variants</span>
+          </button>
+        </div>
 
         <div className="flex items-center gap-2 lg:hidden ml-auto">
           <button 
@@ -418,6 +468,7 @@ export default function App() {
                   uniprotStart={selectedStructure.uniprotStart}
                   uniprotEnd={selectedStructure.uniprotEnd}
                   highlightPosition={selectedVariant?.position}
+                  selectedBinder={selectedBinder}
                   onSelectResidue={(pos) => {
                     console.debug('App: onSelectResidue called with pos:', pos);
                     if (pos === null) {
@@ -474,93 +525,251 @@ export default function App() {
           )}
         </section>
 
-        {/* Right Sidebar: Disease Variants */}
+        {/* Right Sidebar: Disease Variants or Binders */}
         <aside className={cn(
           "border-l border-[#141414] flex flex-col bg-white overflow-y-auto transition-all duration-300 z-40",
           rightPanelOpen ? "w-80 translate-x-0" : "w-0 translate-x-full lg:w-80 lg:translate-x-0"
         )}>
           {selectedProtein ? (
             <div className="p-6 space-y-8 min-w-[20rem]">
-              <section>
-                <div className="flex flex-col gap-4 mb-4">
-                  <div className="flex items-center gap-2 opacity-40">
-                    <Activity className="w-3 h-3" />
-                    <h2 className="text-sm uppercase tracking-widest font-bold italic font-serif">Disease Variants</h2>
-                  </div>
-                  
-                  {variants.some(v => v.disease) && (
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs uppercase font-bold opacity-40">Filter by Disease</label>
-                      <select 
-                        className="w-full text-sm font-mono bg-transparent border border-[#141414]/20 px-2 py-1.5 focus:outline-none focus:border-[#141414] transition-colors"
-                        value={diseaseFilter}
-                        onChange={(e) => setDiseaseFilter(e.target.value)}
-                      >
-                        <option value="all">All Diseases ({variants.filter(v => v.disease).length})</option>
-                        {Array.from(new Set(variants.filter(v => v.disease).map(v => v.disease)))
-                          .sort()
-                          .map(disease => (
-                            <option key={disease} value={disease || ''}>
-                              {disease} ({variants.filter(v => v.disease === disease).length})
-                            </option>
-                          ))
-                        }
-                      </select>
+              {rightPanelType === 'variants' ? (
+                <section>
+                  <div className="flex flex-col gap-4 mb-4">
+                    <div className="flex items-center gap-2 opacity-40">
+                      <Activity className="w-3 h-3" />
+                      <h2 className="text-sm uppercase tracking-widest font-bold italic font-serif">Disease Variants</h2>
                     </div>
-                  )}
-                </div>
-                {loading ? (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="w-6 h-6 animate-spin opacity-20" />
-                  </div>
-                ) : variants.length > 0 ? (
-                  <div className="space-y-2">
-                    {variants
-                      .filter(v => v.disease && (diseaseFilter === 'all' || v.disease === diseaseFilter))
-                      .map((v, idx) => {
-                        const isMultiResidue = v.end && v.end !== v.position;
-                      const isSelected = selectedVariant?.id === v.id;
-                      
-                      return (
-                        <button
-                          key={`${v.id}-${idx}`}
-                          onClick={() => !isMultiResidue && setSelectedVariant(v)}
-                          disabled={isMultiResidue}
-                          className={cn(
-                            "w-full text-left p-3 border border-[#141414] transition-all group relative overflow-hidden",
-                            isSelected ? "bg-[#141414] text-white" : (isMultiResidue ? "bg-gray-50 opacity-40 cursor-not-allowed" : "hover:bg-[#141414]/5")
-                          )}
+                    
+                    {variants.some(v => v.disease) && (
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs uppercase font-bold opacity-40">Filter by Disease</label>
+                        <select 
+                          className="w-full text-sm font-mono bg-transparent border border-[#141414]/20 px-2 py-1.5 focus:outline-none focus:border-[#141414] transition-colors"
+                          value={diseaseFilter}
+                          onChange={(e) => setDiseaseFilter(e.target.value)}
                         >
-                          <div className="flex justify-between items-center mb-1">
-                            <span className="text-xs font-bold uppercase tracking-tighter">
-                              Pos: {v.position}{isMultiResidue ? `-${v.end}` : ''}
-                            </span>
-                            <span className="text-xs font-mono opacity-60">
-                              {isMultiResidue ? 'MULTI-RESIDUE' : `${v.original} → ${v.mutated}`}
-                            </span>
-                          </div>
-                          <div className="font-mono text-sm truncate">{v.disease}</div>
-                          {v.description && (
-                            <div className="text-xs opacity-60 mt-1 leading-tight line-clamp-2">{v.description}</div>
-                          )}
-                          {isMultiResidue && (
-                            <div className="text-xs font-bold uppercase tracking-widest mt-2 text-gray-500 italic">
-                              Selection disabled (Spans multiple residues)
-                            </div>
-                          )}
-                        </button>
-                      );
-                    })}
+                          <option value="all">All Diseases ({variants.filter(v => v.disease).length})</option>
+                          {Array.from(new Set(variants.filter(v => v.disease).map(v => v.disease)))
+                            .sort()
+                            .map(disease => (
+                              <option key={disease} value={disease || ''}>
+                                {disease} ({variants.filter(v => v.disease === disease).length})
+                              </option>
+                            ))
+                          }
+                        </select>
+                      </div>
+                    )}
                   </div>
-                ) : (
-                  <div className="text-sm opacity-40 italic">No disease variants found in UniProt.</div>
-                )}
-              </section>
+                  {loading ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="w-6 h-6 animate-spin opacity-20" />
+                    </div>
+                  ) : variants.length > 0 ? (
+                    <div className="space-y-2">
+                      {variants
+                        .filter(v => v.disease && (diseaseFilter === 'all' || v.disease === diseaseFilter))
+                        .map((v, idx) => {
+                          const isMultiResidue = v.end && v.end !== v.position;
+                        const isSelected = selectedVariant?.id === v.id;
+                        
+                        return (
+                          <button
+                            key={`${v.id}-${idx}`}
+                            onClick={() => !isMultiResidue && setSelectedVariant(v)}
+                            disabled={isMultiResidue}
+                            className={cn(
+                              "w-full text-left p-3 border border-[#141414] transition-all group relative overflow-hidden",
+                              isSelected ? "bg-[#141414] text-white" : (isMultiResidue ? "bg-gray-50 opacity-40 cursor-not-allowed" : "hover:bg-[#141414]/5")
+                            )}
+                          >
+                            <div className="flex justify-between items-center mb-1">
+                              <span className="text-xs font-bold uppercase tracking-tighter">
+                                Pos: {v.position}{isMultiResidue ? `-${v.end}` : ''}
+                              </span>
+                              <span className="text-xs font-mono opacity-60">
+                                {isMultiResidue ? 'MULTI-RESIDUE' : `${v.original} → ${v.mutated}`}
+                              </span>
+                            </div>
+                            <div className="font-mono text-sm truncate">{v.disease}</div>
+                            {v.description && (
+                              <div className="text-xs opacity-60 mt-1 leading-tight line-clamp-2">{v.description}</div>
+                            )}
+                            {isMultiResidue && (
+                              <div className="text-xs font-bold uppercase tracking-widest mt-2 text-gray-500 italic">
+                                Selection disabled (Spans multiple residues)
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="text-sm opacity-40 italic">No disease variants found in UniProt.</div>
+                  )}
+                </section>
+              ) : (
+                <section>
+                  <div className="flex flex-col gap-4 mb-4">
+                    <div className="flex items-center gap-2 opacity-40">
+                      <Layers className="w-3 h-3" />
+                      <h2 className="text-sm uppercase tracking-widest font-bold italic font-serif">Binders</h2>
+                    </div>
+                    
+                    {binders.length > 0 && (
+                      <div className="flex flex-col gap-3">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs uppercase font-bold opacity-40">Filter by Category</label>
+                          <select 
+                            className="w-full text-sm font-mono bg-transparent border border-[#141414]/20 px-2 py-1.5 focus:outline-none focus:border-[#141414] transition-colors"
+                            value={binderFilter}
+                            onChange={(e) => {
+                              setBinderFilter(e.target.value);
+                              setBinderIdFilter('all'); // Reset ID filter when category changes
+                            }}
+                          >
+                            {Array.from(new Set(binders.map(b => b.category)))
+                              .sort((a, b) => {
+                                const order = ['protein', 'ligand', 'dna', 'rna'];
+                                const idxA = order.indexOf(a);
+                                const idxB = order.indexOf(b);
+                                if (idxA === -1 && idxB === -1) return a.localeCompare(b);
+                                if (idxA === -1) return 1;
+                                if (idxB === -1) return -1;
+                                return idxA - idxB;
+                              })
+                              .map(cat => (
+                                <option key={cat} value={cat}>
+                                  {cat.toUpperCase()} ({binders.filter(b => b.category === cat).length})
+                                </option>
+                              ))
+                            }
+                          </select>
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs uppercase font-bold opacity-40">Filter by Entry</label>
+                          <select 
+                            className="w-full text-sm font-mono bg-transparent border border-[#141414]/20 px-2 py-1.5 focus:outline-none focus:border-[#141414] transition-colors"
+                            value={binderIdFilter}
+                            onChange={(e) => setBinderIdFilter(e.target.value)}
+                          >
+                            <option value="all">All Binders</option>
+                            {Array.from(new Set(binders
+                              .filter(b => binderFilter === 'all' || b.category === binderFilter)
+                              .map(b => b.id)))
+                              .map(id => {
+                                const binder = binders.find(b => b.id === id);
+                                const label = (binder?.category === 'protein' || binder?.category === 'antibody') && binder.symbol 
+                                  ? binder.symbol 
+                                  : id;
+                                return { id, label };
+                              })
+                              .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: 'base' }))
+                              .map(({ id, label }) => {
+                                const count = binders.filter(b => b.id === id && (binderFilter === 'all' || b.category === binderFilter)).length;
+                                return (
+                                  <option key={id} value={id}>
+                                    {label} ({count})
+                                  </option>
+                                );
+                              })
+                            }
+                          </select>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {loading ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="w-6 h-6 animate-spin opacity-20" />
+                    </div>
+                  ) : binders.length > 0 ? (
+                    <div className="space-y-2">
+                      {binders
+                        .filter(b => (binderFilter === 'all' || b.category === binderFilter) && (binderIdFilter === 'all' || b.id === binderIdFilter))
+                        .map((b, idx) => {
+                          const isSelected = selectedStructure?.modelId === b.pdbId && selectedBinder?.id === b.id;
+                          
+                          return (
+                            <button
+                              key={`${b.id}-${idx}`}
+                              onClick={() => {
+                                const struct = structures.find(s => s.modelId === b.pdbId);
+                                if (struct) {
+                                  setSelectedStructure(struct);
+                                  setSelectedBinder(b);
+                                }
+                              }}
+                              className={cn(
+                                "w-full text-left p-3 border border-[#141414] transition-all group relative overflow-hidden",
+                                isSelected ? "bg-[#141414] text-white" : "hover:bg-[#141414]/5"
+                              )}
+                            >
+                              <div className="flex justify-between items-start mb-1">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-xs font-bold uppercase tracking-tighter">
+                                    {b.id}
+                                  </span>
+                                  {(b.category === 'protein' || b.category === 'antibody') && (
+                                    <a 
+                                      href={`https://www.uniprot.org/uniprotkb/${b.id}/entry`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="opacity-40 hover:opacity-100 transition-opacity"
+                                    >
+                                      <ExternalLink className="w-3 h-3" />
+                                    </a>
+                                  )}
+                                  {b.category === 'ligand' && (
+                                    <a 
+                                      href={`https://www.ebi.ac.uk/pdbe/entry/pdb/${b.pdbId.toLowerCase()}?activeTab=ligands&id=${b.id}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="opacity-40 hover:opacity-100 transition-opacity"
+                                    >
+                                      <ExternalLink className="w-3 h-3" />
+                                    </a>
+                                  )}
+                                </div>
+                                <span className="text-xs font-mono opacity-60">
+                                  {b.category.toUpperCase()}
+                                </span>
+                              </div>
+                              <div className="font-mono text-sm truncate">{b.symbol || b.name}</div>
+                              {b.symbol && <div className="text-xs opacity-60 mt-1 leading-tight">{b.name}</div>}
+                              <div className="flex justify-between items-end mt-2">
+                                <div className="text-[10px] opacity-40 uppercase tracking-widest">PDB_0000{b.pdbId.toUpperCase()}</div>
+                                {b.category === 'protein' && b.organism && (
+                                  <div className="text-[10px] opacity-40 uppercase tracking-widest truncate max-w-[150px]">{b.organism}</div>
+                                )}
+                              </div>
+                            </button>
+                          );
+                        })}
+                    </div>
+                  ) : (
+                    <div className="text-sm opacity-40 italic">No binders from PDB structures.</div>
+                  )}
+                </section>
+              )}
             </div>
           ) : (
             <div className="h-full flex flex-col items-center justify-center p-8 text-center opacity-20">
-              <Activity className="w-12 h-12 mb-4" />
-              <p className="text-base italic font-serif">Select a protein to view associated disease variations.</p>
+              {rightPanelType === 'variants' ? (
+                <>
+                  <Activity className="w-12 h-12 mb-4" />
+                  <p className="text-base italic font-serif">Select a protein to view associated disease variations.</p>
+                </>
+              ) : (
+                <>
+                  <Layers className="w-12 h-12 mb-4" />
+                  <p className="text-base italic font-serif">Select a protein to explore interacting binders.</p>
+                </>
+              )}
             </div>
           )}
         </aside>
