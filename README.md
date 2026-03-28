@@ -7,7 +7,7 @@ A 3D protein structure viewer for exploring structure, disease variants, and mol
 ## Features
 
 - **Protein search** — Search by UniProt accession or protein name (e.g. `Q12834`, `cdc20`)
-- **3D structure viewer** — Powered by Mol*, display structures from PDB, AlphaFold and other 3D-Beacons providers
+- **3D structure viewer** — Display structures from PDBe, AlphaFold Database and other 3D-Beacons providers
 - **Structure browser** — Filter by providers and sorted by date of release
 - **Sequence schematic** — Visual overview of sequence coverage and positions of disease variants
 - **Disease variants** — Highlight disease variants annotated in UniProt on the structure
