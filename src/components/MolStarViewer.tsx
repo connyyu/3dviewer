@@ -15,6 +15,7 @@ interface MolStarViewerProps {
   highlightPosition?: number;
   selectedBinder?: Binder | null;
   onSelectResidue?: (position: number | null) => void;
+  onPlddtExtracted?: (data: { chainId: string, scores: number[] }[]) => void;
   className?: string;
   resetTrigger?: number;
   isMobile?: boolean;
@@ -30,6 +31,7 @@ export const MolStarViewer: React.FC<MolStarViewerProps> = ({
   highlightPosition, 
   selectedBinder,
   onSelectResidue,
+  onPlddtExtracted,
   className,
   resetTrigger,
   isMobile = false
@@ -43,6 +45,11 @@ export const MolStarViewer: React.FC<MolStarViewerProps> = ({
   useEffect(() => {
     onSelectResidueRef.current = onSelectResidue;
   }, [onSelectResidue]);
+
+  const onPlddtExtractedRef = useRef(onPlddtExtracted);
+  useEffect(() => {
+    onPlddtExtractedRef.current = onPlddtExtracted;
+  }, [onPlddtExtracted]);
 
   const applyVisualState = () => {
     if (!pluginInstance.current || !isReady.current || !mounted.current) return;
@@ -207,6 +214,7 @@ export const MolStarViewer: React.FC<MolStarViewerProps> = ({
       pluginInstance.current = new PluginClass();
       
       const options = {
+        target: 'pdbe-molstar-viewer',
         customData: {
           url: url,
           format: format === 'bcif' ? 'binarycif' : format,
@@ -224,6 +232,8 @@ export const MolStarViewer: React.FC<MolStarViewerProps> = ({
       };
 
       try {
+        if (!viewerRef.current || !document.body.contains(viewerRef.current)) return;
+        
         await pluginInstance.current.render(viewerRef.current, options);
         if (!mounted.current) return;
         
@@ -233,6 +243,95 @@ export const MolStarViewer: React.FC<MolStarViewerProps> = ({
         
         isReady.current = true;
         applyVisualState();
+
+        // Extract pLDDT from B-factors if it's an AlphaFold model
+        const isAlphaFold = url.includes('alphafold') || provider?.toLowerCase().includes('alphafold');
+        if (isAlphaFold && onPlddtExtractedRef.current) {
+          try {
+            // Access underlying Mol* plugin context
+            const plugin = pluginInstance.current.plugin || pluginInstance.current.viewerInstance?.plugin;
+            if (plugin) {
+              const structures = plugin.managers.structure.hierarchy.current.structures;
+              if (structures.length > 0) {
+                // Try to get the model from the structure hierarchy
+                const structureRef = structures[0];
+                const structure = structureRef.cell.obj?.data;
+                // In Mol*, a structure can have multiple models, but usually it's just one
+                const model = structure?.models?.[0] || structureRef.model;
+                
+                if (model && model.atomicConformation && model.atomicConformation.B_iso_or_equiv) {
+                  const bFactors = model.atomicConformation.B_iso_or_equiv;
+                  const residueIndex = model.atomicHierarchy.residueAtomSegments.index;
+                  const residueCount = model.atomicHierarchy.residueAtomSegments.count;
+                  const chainIndex = model.atomicHierarchy.chainAtomSegments.index;
+                  const chainCount = model.atomicHierarchy.chainAtomSegments.count;
+                  
+                  // Map residue to chain
+                  const residueToChain = new Int32Array(residueCount);
+                  for (let i = 0; i < model.atomicHierarchy.residueAtomSegments.count; i++) {
+                    const firstAtom = model.atomicHierarchy.residueAtomSegments.offsets[i];
+                    residueToChain[i] = chainIndex[firstAtom];
+                  }
+
+                  const chainResults: { chainId: string, scores: number[] }[] = [];
+                  
+                  for (let c = 0; c < chainCount; c++) {
+                    const chainId = model.atomicHierarchy.chains.label_asym_id.value(c);
+                    const chainResidueOffsets = model.atomicHierarchy.residueAtomSegments.offsets;
+                    
+                    // Find residues in this chain
+                    const chainAtomsStart = model.atomicHierarchy.chainAtomSegments.offsets[c];
+                    const chainAtomsEnd = model.atomicHierarchy.chainAtomSegments.offsets[c+1] || model.atomicHierarchy.atoms._count;
+                    
+                    const firstResidue = residueIndex[chainAtomsStart];
+                    const lastResidue = residueIndex[chainAtomsEnd - 1];
+                    const chainResidueCount = lastResidue - firstResidue + 1;
+
+                    const plddtByResidue = new Array(chainResidueCount).fill(0);
+                    const atomCountByResidue = new Array(chainResidueCount).fill(0);
+                    
+                    for (let i = chainAtomsStart; i < chainAtomsEnd; i++) {
+                      const rIdx = residueIndex[i] - firstResidue;
+                      plddtByResidue[rIdx] += bFactors[i];
+                      atomCountByResidue[rIdx]++;
+                    }
+                    
+                    const finalPlddt = plddtByResidue.map((sum, i) => sum / atomCountByResidue[i]);
+                    
+                    // Basic validation: check if scores are all the same or all zero
+                    const nonZeroScores = finalPlddt.filter(s => s > 0);
+                    const allSame = finalPlddt.length > 0 && finalPlddt.every(s => s === finalPlddt[0]);
+                    
+                    if (nonZeroScores.length > 0 && !(allSame && finalPlddt[0] === 0)) {
+                      // If we have uniprotStart, we should offset the scores to match the full sequence
+                      let adjustedPlddt = finalPlddt;
+                      if (uniprotStart && uniprotStart > 1) {
+                        const padding = new Array(uniprotStart - 1).fill(undefined);
+                        adjustedPlddt = [...padding, ...finalPlddt];
+                      }
+                      chainResults.push({ chainId, scores: adjustedPlddt });
+                    }
+                  }
+                  
+                  if (chainResults.length > 0) {
+                    console.debug('Extracted pLDDT per chain:', chainResults.map(c => `${c.chainId}: ${c.scores.length}`).join(', '));
+                    onPlddtExtractedRef.current(chainResults);
+                  }
+                } else {
+                  console.debug('MolStar: Model or atomicConformation not found for pLDDT extraction');
+                  if (model) {
+                    console.debug('Model exists but missing data:', {
+                      hasConformation: !!model.atomicConformation,
+                      hasBFactors: !!model.atomicConformation?.B_iso_or_equiv
+                    });
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            console.error('Error extracting pLDDT from MolStar:', e);
+          }
+        }
 
         // Robust event extraction logic
         const extractPosition = (event: any) => {
@@ -296,7 +395,7 @@ export const MolStarViewer: React.FC<MolStarViewerProps> = ({
       }
       pluginInstance.current = null;
     };
-  }, [url, format]);
+  }, [url, format, isMobile]);
 
   useEffect(() => {
     applyVisualState();
@@ -318,6 +417,7 @@ export const MolStarViewer: React.FC<MolStarViewerProps> = ({
   return (
     <div 
       ref={viewerRef} 
+      id="pdbe-molstar-viewer"
       className={className}
       style={{ position: 'relative', width: '100%', height: '100%' }}
     />

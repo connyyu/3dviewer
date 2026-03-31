@@ -281,6 +281,47 @@ export async function getBinders(pdbIds: string[], queryUniprot?: string): Promi
   return binders;
 }
 
+export async function getAlphaFoldConfidence(modelId: string): Promise<number[] | null> {
+  try {
+    // modelId is usually like AF-P04637-F1 or AF-0000000066253723
+    let version = 4;
+    
+    try {
+      const uniprotPart = modelId.replace('AF-', '').split('-')[0];
+      // Only call prediction API if it looks like a UniProt accession (usually alphanumeric, not just digits)
+      if (uniprotPart.length <= 10 && /[A-Z]/.test(uniprotPart)) {
+        const response = await axios.get(`https://alphafold.ebi.ac.uk/api/prediction/${uniprotPart}`);
+        version = response.data?.[0]?.latestVersion || 4;
+      }
+    } catch (e) {
+      console.debug(`Prediction API failed for ${modelId}, falling back to v4`);
+    }
+    
+    try {
+      const confResponse = await axios.get(`https://alphafold.ebi.ac.uk/files/${modelId}-confidence_v${version}.json`);
+      if (confResponse.data && Array.isArray(confResponse.data.confidenceScore)) {
+        return confResponse.data.confidenceScore;
+      }
+    } catch (e) {
+      // If v4 fails, try v1 as a last resort
+      if (version !== 1) {
+        try {
+          const confResponseV1 = await axios.get(`https://alphafold.ebi.ac.uk/files/${modelId}-confidence_v1.json`);
+          if (confResponseV1.data && Array.isArray(confResponseV1.data.confidenceScore)) {
+            return confResponseV1.data.confidenceScore;
+          }
+        } catch (v1Err) {
+          // Both failed
+        }
+      }
+    }
+    return null;
+  } catch (error) {
+    console.warn(`Error fetching AlphaFold confidence for ${modelId}:`, error);
+    return null;
+  }
+}
+
 export async function getResidueConfidence(uniprotId: string): Promise<Record<string, number[]>> {
   const id = uniprotId.toUpperCase();
   const confidenceMap: Record<string, number[]> = {};
@@ -319,15 +360,34 @@ export async function getResidueConfidence(uniprotId: string): Promise<Record<st
     }
 
     // Fallback: Try AlphaFold API if 3D-Beacons failed
-    const afResponse = await axios.get(`https://alphafold.ebi.ac.uk/api/prediction/${id}`);
-    if (afResponse.data && Array.isArray(afResponse.data)) {
-      afResponse.data.forEach((prediction: any) => {
-        if (prediction.plddt) {
-          if (prediction.entryId) confidenceMap[prediction.entryId] = prediction.plddt;
-          if (prediction.uniprotAccession) confidenceMap[prediction.uniprotAccession.toUpperCase()] = prediction.plddt;
-          confidenceMap[id] = prediction.plddt;
+    try {
+      const uniprotPart = id.split('-')[0];
+      // Only call prediction API if it looks like a UniProt accession
+      if (uniprotPart.length <= 10 && /[A-Z]/.test(uniprotPart)) {
+        const afResponse = await axios.get(`https://alphafold.ebi.ac.uk/api/prediction/${uniprotPart}`);
+        if (afResponse.data && Array.isArray(afResponse.data) && afResponse.data.length > 0) {
+          const prediction = afResponse.data[0];
+          const entryId = prediction.entryId;
+          const version = prediction.latestVersion || 4;
+          
+          // Fetch the actual confidence scores from the AlphaFold files server
+          try {
+            const confResponse = await axios.get(`https://alphafold.ebi.ac.uk/files/${entryId}-confidence_v${version}.json`);
+            if (confResponse.data && Array.isArray(confResponse.data.confidenceScore)) {
+              const scores = confResponse.data.confidenceScore;
+              confidenceMap[entryId] = scores;
+              confidenceMap[id] = scores;
+              if (prediction.uniprotAccession) {
+                confidenceMap[prediction.uniprotAccession.toUpperCase()] = scores;
+              }
+            }
+          } catch (e) {
+            console.warn('Failed to fetch AlphaFold confidence file:', e);
+          }
         }
-      });
+      }
+    } catch (e) {
+      console.debug(`Prediction API failed in getResidueConfidence for ${id}`);
     }
     
     return confidenceMap;

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Database, Box, Info, ExternalLink, ChevronRight, Loader2, Dna, Activity, PanelLeft, PanelRight, Layers } from 'lucide-react';
-import { searchUniProt, getStructures, getVariants, getBinders } from './services/proteinService';
+import { searchUniProt, getStructures, getVariants, getBinders, getResidueConfidence, getAlphaFoldConfidence } from './services/proteinService';
 import { Binder, ProteinSummary, StructureModel, Variant } from './types';
 import { MolStarViewer } from './components/MolStarViewer';
 import { SequenceSchematic } from './components/SequenceSchematic';
@@ -91,7 +91,14 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
   const [resetCounter, setResetCounter] = useState(0);
+  const [extractedPlddt, setExtractedPlddt] = useState<{ chainId: string, scores: number[] }[] | null>(null);
+
+  // Clear extracted pLDDT when structure changes
+  useEffect(() => {
+    setExtractedPlddt(null);
+  }, [selectedStructure]);
   const [isMobile, setIsMobile] = useState(false);
+  const [residueConfidence, setResidueConfidence] = useState<Record<string, number[]>>({});
 
   // Sidebar visibility states
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
@@ -131,14 +138,17 @@ export default function App() {
     setLoading(true);
     setVariants([]);
     setBinders([]);
+    setStructureFilter('all');
     setDiseaseFilter('all');
+    setBinderFilter('protein');
     setBinderIdFilter('all');
     setSelectedVariant(null);
     setSelectedBinder(null);
     
-    const [structureData, variantData] = await Promise.all([
+    const [structureData, variantData, confidenceData] = await Promise.all([
       getStructures(protein.uniprotId),
-      getVariants(protein.uniprotId)
+      getVariants(protein.uniprotId),
+      getResidueConfidence(protein.uniprotId)
     ]);
 
     const getProviderPriority = (provider?: string) => {
@@ -172,6 +182,7 @@ export default function App() {
 
     setStructures(sortedStructures);
     setVariants(variantData);
+    setResidueConfidence(confidenceData);
 
     if (sortedStructures.length > 0) {
       setSelectedStructure(sortedStructures[0]);
@@ -199,6 +210,44 @@ export default function App() {
     setLoading(false);
     setResults([]); // Clear search results after selection
   };
+
+  // Fetch AlphaFold confidence scores when selectedStructure changes
+  useEffect(() => {
+    if (!selectedStructure) return;
+    
+    const isAlphaFold = selectedStructure.provider?.toLowerCase().includes('alphafold') || 
+                      selectedStructure.modelId?.startsWith('AF-');
+    
+    if (isAlphaFold && !residueConfidence[selectedStructure.modelId]) {
+      getAlphaFoldConfidence(selectedStructure.modelId).then(scores => {
+        if (scores) {
+          setResidueConfidence(prev => ({
+            ...prev,
+            [selectedStructure.modelId]: scores
+          }));
+        }
+      });
+    }
+  }, [selectedStructure, residueConfidence]);
+
+  const plddtScores = React.useMemo(() => {
+    if (extractedPlddt && extractedPlddt.length > 0) {
+      // For now, we'll return an array of score arrays
+      return extractedPlddt.map(c => c.scores);
+    }
+    if (!selectedStructure || !selectedProtein) return undefined;
+    
+    const isAlphaFold = selectedStructure.provider?.toLowerCase().includes('alphafold') || 
+                      selectedStructure.modelId?.startsWith('AF-');
+    if (!isAlphaFold) return undefined;
+    
+    const upId = selectedProtein.uniprotId.toUpperCase();
+    const scores = residueConfidence[selectedStructure.modelId] || 
+           residueConfidence[upId] || 
+           residueConfidence[Object.keys(residueConfidence).find(k => k.startsWith(upId)) || ''];
+    
+    return scores ? [scores] : undefined;
+  }, [extractedPlddt, selectedStructure, selectedProtein, residueConfidence]);
 
   return (
     <div className="flex flex-col h-screen bg-[#E4E3E0] text-[#141414] font-sans overflow-hidden">
@@ -368,8 +417,13 @@ export default function App() {
                       })
                       .map((s, idx) => {
                         const isPdb = s.provider?.toLowerCase().includes('pdb');
+                        const isAlphaFold = s.provider?.toLowerCase().includes('alphafold') || s.modelId?.startsWith('AF-');
                         const displayId = isPdb ? `PDB_0000${s.modelId.toUpperCase()}` : s.modelId;
-                        const pdbeLink = isPdb ? `https://www.ebi.ac.uk/pdbe/entry/pdb/${s.modelId.toLowerCase()}` : null;
+                        const externalLink = isPdb 
+                          ? `https://www.ebi.ac.uk/pdbe/entry/pdb/${s.modelId.toLowerCase()}` 
+                          : isAlphaFold 
+                            ? `https://alphafold.ebi.ac.uk/entry/${s.modelId}`
+                            : null;
 
                         return (
                           <div key={`${s.modelId}-${idx}`} className="relative group/item">
@@ -406,16 +460,16 @@ export default function App() {
                               <div className="font-mono text-sm truncate">{displayId}</div>
                               {s.method && <div className="text-[10px] opacity-60 mt-1 uppercase tracking-widest">{s.method}</div>}
                             </button>
-                            {pdbeLink && (
+                            {externalLink && (
                               <a 
-                                href={pdbeLink}
+                                href={externalLink}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className={cn(
                                   "absolute right-2 bottom-2 p-1 rounded-full hover:bg-white/20 transition-colors",
                                   selectedStructure?.modelId === s.modelId ? "text-white" : "text-[#141414]/40 hover:text-[#141414]"
                                 )}
-                                title="View on PDBe"
+                                title={isPdb ? "View on PDBe" : "View on AlphaFold DB"}
                                 onClick={(e) => e.stopPropagation()}
                               >
                                 <ExternalLink className="w-3 h-3" />
@@ -452,6 +506,7 @@ export default function App() {
                     selectedVariant={selectedVariant}
                     showVariants={rightPanelType === 'variants'}
                     isMobile={isMobile}
+                    plddtScores={plddtScores}
                     onSelectVariant={(v) => {
                       const isSingleResidue = !v.end || v.end === v.position;
                       if (isSingleResidue) {
@@ -485,6 +540,10 @@ export default function App() {
                   selectedBinder={selectedBinder}
                   resetTrigger={resetCounter}
                   isMobile={isMobile}
+                  onPlddtExtracted={(scores) => {
+                    console.debug('App: Extracted pLDDT scores:', scores.length);
+                    setExtractedPlddt(scores);
+                  }}
                   onSelectResidue={(pos) => {
                     console.debug('App: onSelectResidue called with pos:', pos);
                     if (pos === null) {

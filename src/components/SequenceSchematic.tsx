@@ -9,6 +9,7 @@ interface SequenceSchematicProps {
   selectedVariant: Variant | null;
   showVariants?: boolean;
   isMobile?: boolean;
+  plddtScores?: number[][];
   onSelectVariant: (variant: Variant) => void;
   className?: string;
 }
@@ -20,6 +21,7 @@ export const SequenceSchematic: React.FC<SequenceSchematicProps> = ({
   selectedVariant,
   showVariants = true,
   isMobile = false,
+  plddtScores,
   onSelectVariant,
   className
 }) => {
@@ -109,6 +111,90 @@ export const SequenceSchematic: React.FC<SequenceSchematicProps> = ({
               <span className="text-[8px] font-mono opacity-40 mt-0">{tick}</span>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* pLDDT Confidence Bar */}
+      {selectedStructure && (selectedStructure.provider?.toLowerCase().includes('alphafold') || selectedStructure.modelId?.startsWith('AF-')) && (
+        <div className="space-y-1 mt-2">
+          <div className="flex items-center justify-between mb-0.5">
+            <span className="text-[9px] uppercase font-bold opacity-40 tracking-widest">pLDDT CONFIDENCE</span>
+            {(!plddtScores || plddtScores.length === 0) && (
+              <span className="text-[9px] italic opacity-40">Loading confidence scores...</span>
+            )}
+          </div>
+          
+          {plddtScores && plddtScores.length > 0 ? (
+            <div className="space-y-1">
+              {plddtScores.map((scores, idx) => (
+                <div key={idx} className="relative h-2 w-full bg-gray-200 rounded-sm overflow-hidden flex border border-[#141414]/10">
+                  <canvas 
+                    ref={(canvas) => {
+                      if (canvas) {
+                        const ctx = canvas.getContext('2d');
+                        if (ctx) {
+                          const w = canvas.width;
+                          const h = canvas.height;
+                          ctx.clearRect(0, 0, w, h);
+                          const step = w / length;
+                          
+                          const getPlddtColor = (score: number) => {
+                            if (score > 90) return '#0053D6';
+                            if (score > 70) return '#65CBF3';
+                            if (score > 50) return '#FFDB13';
+                            return '#FF7D45';
+                          };
+      
+                          scores.forEach((score, i) => {
+                            if (score !== undefined) {
+                              ctx.fillStyle = getPlddtColor(score);
+                              ctx.fillRect(i * step, 0, step + 0.5, h);
+                            }
+                          });
+                        }
+                      }
+                    }}
+                    width={2000} // High resolution for the bar
+                    height={40}
+                    className="w-full h-full"
+                  />
+                  {plddtScores.length > 1 && (
+                    <div className="absolute left-1 top-0 bottom-0 flex items-center">
+                      <span className="text-[6px] font-bold bg-white/80 px-0.5 rounded text-[#141414]/60">CHAIN {idx + 1}</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="relative h-2 w-full bg-gray-200 rounded-sm overflow-hidden flex border border-[#141414]/10">
+              <div className="w-full h-full bg-gray-100 animate-pulse" />
+            </div>
+          )}
+          
+          {/* pLDDT Color Key */}
+          {!isMobile && (
+            <div className="flex items-center gap-4 px-1">
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1">
+                  <div className="w-2 h-2 rounded-full bg-[#0053D6]" />
+                  <span className="text-[9px] font-mono opacity-60">Very High (&gt;90)</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <div className="w-2 h-2 rounded-full bg-[#65CBF3]" />
+                  <span className="text-[9px] font-mono opacity-60">Confident (70-90)</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <div className="w-2 h-2 rounded-full bg-[#FFDB13]" />
+                  <span className="text-[9px] font-mono opacity-60">Low (50-70)</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <div className="w-2 h-2 rounded-full bg-[#FF7D45]" />
+                  <span className="text-[9px] font-mono opacity-60">Very Low (&lt;50)</span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

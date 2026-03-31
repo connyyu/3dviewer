@@ -1,52 +1,40 @@
 import {StrictMode} from 'react';
-import {createRoot, Root} from 'react-dom/client';
+import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 
-const rootKey = '__HAKU_REACT_ROOT__';
+const container = document.getElementById('root');
 
-function initialize() {
-  const container = document.getElementById('root');
-  if (!container) return;
-
-  let root: Root;
+if (container) {
+  const global = window as any;
   
-  // Try to get the existing root from the window object
-  if ((window as any)[rootKey]) {
-    root = (window as any)[rootKey];
-  } else {
-    // Check if the container is already managed by React
-    // React 18+ attaches internal properties to the container
-    const isReactManaged = [
-      ...Object.getOwnPropertyNames(container),
-      ...Object.getOwnPropertySymbols(container).map(s => s.toString())
-    ].some(key => 
-      key.includes('__reactContainer') || 
-      key.includes('__reactRootContainer')
-    );
-
-    if (isReactManaged) {
-      // If it's already managed but we don't have the root reference,
-      // the safest way to "reset" is to replace the container element entirely.
-      const newContainer = document.createElement('div');
-      newContainer.id = 'root';
-      if (container.className) newContainer.className = container.className;
-      
-      container.parentNode?.replaceChild(newContainer, container);
-      root = createRoot(newContainer);
-    } else {
-      root = createRoot(container);
-    }
-    
-    // Store the root reference on the window object for future re-initializations
-    (window as any)[rootKey] = root;
+  // Initialize a global WeakMap to store roots for DOM elements
+  if (!global.__REACT_ROOT_MAP__) {
+    global.__REACT_ROOT_MAP__ = new WeakMap();
   }
+  
+  let root = global.__REACT_ROOT_MAP__.get(container);
+  
+  if (!root) {
+    try {
+      root = createRoot(container);
+      global.__REACT_ROOT_MAP__.set(container, root);
+    } catch (e) {
+      console.warn('Failed to create root, attempting to reuse existing one if possible', e);
+      // If createRoot fails, it's likely already created. 
+      // We try to fallback to a global property if the WeakMap failed us.
+      root = global.__REACT_ROOT__;
+    }
+  }
+  
+  // Also store in a simple global for extra redundancy
+  global.__REACT_ROOT__ = root;
 
-  root.render(
-    <StrictMode>
-      <App />
-    </StrictMode>,
-  );
+  if (root) {
+    root.render(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+    );
+  }
 }
-
-initialize();
