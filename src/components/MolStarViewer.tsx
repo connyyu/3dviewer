@@ -16,6 +16,8 @@ interface MolStarViewerProps {
   selectedBinder?: Binder | null;
   onSelectResidue?: (position: number | null) => void;
   className?: string;
+  resetTrigger?: number;
+  isMobile?: boolean;
 }
 
 export const MolStarViewer: React.FC<MolStarViewerProps> = ({ 
@@ -28,7 +30,9 @@ export const MolStarViewer: React.FC<MolStarViewerProps> = ({
   highlightPosition, 
   selectedBinder,
   onSelectResidue,
-  className 
+  className,
+  resetTrigger,
+  isMobile = false
 }) => {
   const viewerRef = useRef<HTMLDivElement>(null);
   const pluginInstance = useRef<any>(null);
@@ -126,8 +130,18 @@ export const MolStarViewer: React.FC<MolStarViewerProps> = ({
 
         // 3. Highlight Binder
         if (selectedBinder) {
+          let binderColor = { r: 249, g: 115, b: 22 }; // Default: Orange (Protein)
+          
+          if (selectedBinder.category === 'ligand') {
+            binderColor = { r: 16, g: 185, b: 129 }; // Green
+          } else if (selectedBinder.category === 'dna') {
+            binderColor = { r: 217, g: 70, b: 239 }; // Magenta
+          } else if (selectedBinder.category === 'rna') {
+            binderColor = { r: 220, g: 38, b: 38 }; // Red
+          }
+
           const binderHighlight: any = {
-            color: { r: 16, g: 185, b: 129 }, // Emerald Green
+            color: binderColor,
             focus: true,
           };
 
@@ -198,6 +212,7 @@ export const MolStarViewer: React.FC<MolStarViewerProps> = ({
           format: format === 'bcif' ? 'binarycif' : format,
         },
         alphafoldView: url.includes('alphafold') || provider?.toLowerCase().includes('alphafold'),
+        hideStructureQuality: isMobile,
         bgColor: { r: 255, g: 255, b: 255 },
         hideCanvasControls: ['all'],
         landscape: true,
@@ -286,6 +301,19 @@ export const MolStarViewer: React.FC<MolStarViewerProps> = ({
   useEffect(() => {
     applyVisualState();
   }, [highlightPosition, selectedBinder, uniprotId, uniprotStart, uniprotEnd, provider]);
+
+  useEffect(() => {
+    if (resetTrigger && pluginInstance.current && isReady.current) {
+      try {
+        // Reset camera and visual state
+        pluginInstance.current.visual.reset({ camera: true, theme: true });
+        // Re-apply visual state to restore coloring and highlights
+        applyVisualState();
+      } catch (e) {
+        console.error('Error resetting MolStar view:', e);
+      }
+    }
+  }, [resetTrigger]);
 
   return (
     <div 

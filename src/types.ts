@@ -40,4 +40,5 @@ export interface StructureModel {
   releaseDate?: string;
   uniprotStart?: number;
   uniprotEnd?: number;
+  plddtScores?: number[];
 }

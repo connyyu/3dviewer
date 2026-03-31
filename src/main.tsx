@@ -10,25 +10,36 @@ function initialize() {
   if (!container) return;
 
   let root: Root;
-  const existingRoot = (window as any)[rootKey];
-
-  if (existingRoot) {
-    root = existingRoot;
+  
+  // Try to get the existing root from the window object
+  if ((window as any)[rootKey]) {
+    root = (window as any)[rootKey];
   } else {
-    // If we don't have a reference to the root but the container is already owned by React,
-    // we must replace the container to avoid the warning.
-    const isReactOwned = Object.keys(container).some(key => key.startsWith('__reactContainer')) || 
-                        (container as any)._reactRootContainer;
-    
-    if (isReactOwned) {
-      const newContainer = container.cloneNode(false) as HTMLElement;
+    // Check if the container is already managed by React
+    // React 18+ attaches internal properties to the container
+    const isReactManaged = [
+      ...Object.getOwnPropertyNames(container),
+      ...Object.getOwnPropertySymbols(container).map(s => s.toString())
+    ].some(key => 
+      key.includes('__reactContainer') || 
+      key.includes('__reactRootContainer')
+    );
+
+    if (isReactManaged) {
+      // If it's already managed but we don't have the root reference,
+      // the safest way to "reset" is to replace the container element entirely.
+      const newContainer = document.createElement('div');
+      newContainer.id = 'root';
+      if (container.className) newContainer.className = container.className;
+      
       container.parentNode?.replaceChild(newContainer, container);
       root = createRoot(newContainer);
-      (window as any)[rootKey] = root;
     } else {
       root = createRoot(container);
-      (window as any)[rootKey] = root;
     }
+    
+    // Store the root reference on the window object for future re-initializations
+    (window as any)[rootKey] = root;
   }
 
   root.render(

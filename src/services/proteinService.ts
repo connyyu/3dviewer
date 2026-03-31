@@ -280,3 +280,62 @@ export async function getBinders(pdbIds: string[], queryUniprot?: string): Promi
   
   return binders;
 }
+
+export async function getResidueConfidence(uniprotId: string): Promise<Record<string, number[]>> {
+  const id = uniprotId.toUpperCase();
+  const confidenceMap: Record<string, number[]> = {};
+
+  try {
+    // Try 3D-Beacons residue API first as it's the standard for residue-level data
+    const response = await axios.get(`https://www.ebi.ac.uk/pdbe/pdbe-kb/3dbeacons/api/v2/uniprot/residue/${id}.json`);
+    const data = response.data;
+    
+    if (data && Array.isArray(data.structures)) {
+      data.structures.forEach((s: any) => {
+        const modelId = s.model_identifier;
+        if (!confidenceMap[modelId]) {
+          confidenceMap[modelId] = [];
+        }
+        
+        if (Array.isArray(s.residues)) {
+          s.residues.forEach((r: any) => {
+            const index = r.residue_number - 1;
+            if (index >= 0) {
+              confidenceMap[modelId][index] = r.confidence_score;
+            }
+          });
+        }
+      });
+      
+      // Also store under the UniProt ID as a fallback for all models of this protein
+      const firstModelId = data.structures[0]?.model_identifier;
+      if (firstModelId && confidenceMap[firstModelId]) {
+        confidenceMap[id] = confidenceMap[firstModelId];
+      }
+    }
+    
+    if (Object.keys(confidenceMap).length > 0) {
+      return confidenceMap;
+    }
+
+    // Fallback: Try AlphaFold API if 3D-Beacons failed
+    const afResponse = await axios.get(`https://alphafold.ebi.ac.uk/api/prediction/${id}`);
+    if (afResponse.data && Array.isArray(afResponse.data)) {
+      afResponse.data.forEach((prediction: any) => {
+        if (prediction.plddt) {
+          if (prediction.entryId) confidenceMap[prediction.entryId] = prediction.plddt;
+          if (prediction.uniprotAccession) confidenceMap[prediction.uniprotAccession.toUpperCase()] = prediction.plddt;
+          confidenceMap[id] = prediction.plddt;
+        }
+      });
+    }
+    
+    return confidenceMap;
+  } catch (error: any) {
+    if (error.response && error.response.status === 404) {
+      return confidenceMap;
+    }
+    console.warn('Error fetching residue confidence:', error.message || error);
+    return confidenceMap;
+  }
+}

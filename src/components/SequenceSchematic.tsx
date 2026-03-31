@@ -7,6 +7,8 @@ interface SequenceSchematicProps {
   selectedStructure: StructureModel | null;
   variants: Variant[];
   selectedVariant: Variant | null;
+  showVariants?: boolean;
+  isMobile?: boolean;
   onSelectVariant: (variant: Variant) => void;
   className?: string;
 }
@@ -16,6 +18,8 @@ export const SequenceSchematic: React.FC<SequenceSchematicProps> = ({
   selectedStructure,
   variants,
   selectedVariant,
+  showVariants = true,
+  isMobile = false,
   onSelectVariant,
   className
 }) => {
@@ -29,18 +33,25 @@ export const SequenceSchematic: React.FC<SequenceSchematicProps> = ({
   const left = getPercentage(start - 1);
   const width = getPercentage(end - start + 1);
 
+  // Ruler intervals
+  const interval = length < 800 ? 50 : 100;
+  const ticks = [];
+  for (let i = interval; i <= length; i += interval) {
+    ticks.push(i);
+  }
+
   return (
-    <div className={cn("space-y-4", className)}>
-      <div className="flex justify-between items-end mb-1">
+    <div className={cn("space-y-1", className)}>
+      <div className="flex justify-between items-end mb-0.5">
         <div className="flex flex-col">
-          <span className="text-xs uppercase font-bold opacity-40">SEQUENCE (1 - {length})</span>
+          <span className="text-xs uppercase font-bold opacity-40 tracking-widest">SEQUENCE (1 - {length})</span>
         </div>
       </div>
 
-      <div className="relative h-5 bg-yellow-50 border border-yellow-200 rounded-md overflow-hidden group shadow-inner">
+      <div className="relative h-4 bg-yellow-50 border border-yellow-200 rounded-sm overflow-hidden group shadow-inner">
         {/* Full Sequence Bar */}
         <div className="absolute inset-0 flex items-center px-1">
-          <div className="w-full h-1 bg-yellow-200/50 rounded-full" />
+          <div className="w-full h-0.5 bg-yellow-200/50 rounded-full" />
         </div>
 
         {/* Structure Coverage Highlight */}
@@ -61,7 +72,7 @@ export const SequenceSchematic: React.FC<SequenceSchematicProps> = ({
         )}
 
         {/* Variant Markers */}
-        {variants.map((v, idx) => {
+        {showVariants && variants.map((v, idx) => {
           const isSelected = selectedVariant?.id === v.id;
           const pos = getPercentage(v.position);
           const isMultiResidue = v.end && v.end !== v.position;
@@ -72,7 +83,7 @@ export const SequenceSchematic: React.FC<SequenceSchematicProps> = ({
               onClick={() => !isMultiResidue && onSelectVariant(v)}
               disabled={isMultiResidue}
               className={cn(
-                "absolute top-1/2 -translate-y-1/2 w-1 h-3 transition-all z-30",
+                "absolute top-1/2 -translate-y-1/2 w-1 h-2.5 transition-all z-30",
                 isMultiResidue ? "bg-gray-400 opacity-40 cursor-not-allowed" : "hover:scale-y-125 cursor-pointer",
                 isSelected ? "bg-red-600 w-1.5 z-40" : (!isMultiResidue && "bg-red-400 opacity-60 hover:opacity-100")
               )}
@@ -85,9 +96,25 @@ export const SequenceSchematic: React.FC<SequenceSchematicProps> = ({
         })}
       </div>
 
-      <div className="flex justify-end">
+      {/* Ruler */}
+      {!isMobile && (
+        <div className="relative h-4 mt-0">
+          {ticks.map(tick => (
+            <div 
+              key={tick} 
+              className="absolute flex flex-col items-center -translate-x-1/2"
+              style={{ left: `${getPercentage(tick)}%` }}
+            >
+              <div className="w-px h-1 bg-[#141414]/20" />
+              <span className="text-[8px] font-mono opacity-40 mt-0">{tick}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex justify-end mt-1">
         {selectedStructure && (
-          <span className="text-xs uppercase font-bold opacity-40 text-right">
+          <span className="text-[10px] uppercase font-bold opacity-30 text-right">
             Structure: {start}-{end} ({((end - start + 1) / length * 100).toFixed(1)}% coverage)
           </span>
         )}

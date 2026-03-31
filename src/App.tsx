@@ -90,6 +90,8 @@ export default function App() {
   const [selectedVariant, setSelectedVariant] = useState<Variant | null>(null);
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
+  const [resetCounter, setResetCounter] = useState(0);
+  const [isMobile, setIsMobile] = useState(false);
 
   // Sidebar visibility states
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
@@ -98,7 +100,9 @@ export default function App() {
   // Handle initial responsive state
   useEffect(() => {
     const handleResize = () => {
-      if (window.innerWidth < 1024) { // tablet/mobile
+      const mobile = window.innerWidth < 1024;
+      setIsMobile(mobile);
+      if (mobile) { // tablet/mobile
         setLeftPanelOpen(true);
         setRightPanelOpen(false);
       } else {
@@ -371,6 +375,9 @@ export default function App() {
                           <div key={`${s.modelId}-${idx}`} className="relative group/item">
                             <button
                               onClick={() => {
+                                if (selectedStructure?.modelId === s.modelId) {
+                                  setResetCounter(prev => prev + 1);
+                                }
                                 setSelectedStructure(s);
                                 setSelectedVariant(null);
                                 setSelectedBinder(null);
@@ -441,8 +448,10 @@ export default function App() {
                   <SequenceSchematic 
                     length={selectedProtein.length}
                     selectedStructure={selectedStructure}
-                    variants={variants.filter(v => v.disease)}
+                    variants={variants.filter(v => v.disease && (diseaseFilter === 'all' || v.disease === diseaseFilter))}
                     selectedVariant={selectedVariant}
+                    showVariants={rightPanelType === 'variants'}
+                    isMobile={isMobile}
                     onSelectVariant={(v) => {
                       const isSingleResidue = !v.end || v.end === v.position;
                       if (isSingleResidue) {
@@ -474,6 +483,8 @@ export default function App() {
                   uniprotEnd={selectedStructure.uniprotEnd}
                   highlightPosition={selectedVariant?.position}
                   selectedBinder={selectedBinder}
+                  resetTrigger={resetCounter}
+                  isMobile={isMobile}
                   onSelectResidue={(pos) => {
                     console.debug('App: onSelectResidue called with pos:', pos);
                     if (pos === null) {
@@ -701,6 +712,10 @@ export default function App() {
                             <button
                               key={`${b.id}-${idx}`}
                               onClick={() => {
+                                const isSameBinder = selectedStructure?.modelId === b.pdbId && selectedBinder?.id === b.id;
+                                if (isSameBinder) {
+                                  setResetCounter(prev => prev + 1);
+                                }
                                 const struct = structures.find(s => s.modelId === b.pdbId);
                                 if (struct) {
                                   setSelectedStructure(struct);
@@ -783,7 +798,7 @@ export default function App() {
       {/* Footer / Status Bar */}
       <footer className="border-t border-[#141414] p-4 bg-white flex justify-between items-center text-[11px] uppercase tracking-widest font-bold opacity-40">
         <div className="flex gap-4">
-          <span>data source: UniProt / 3D-beacons</span>
+          <span>data source: UniProt / PDBE</span>
         </div>
         <div>vibe-coded with Google AI studio</div>
       </footer>
