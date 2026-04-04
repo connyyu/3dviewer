@@ -15,6 +15,10 @@ export async function searchUniProt(query: string): Promise<ProteinSummary[]> {
       }
     });
 
+    if (!response.data || !Array.isArray(response.data.results)) {
+      return [];
+    }
+
     return response.data.results.map((r: any) => ({
       uniprotId: r.primaryAccession,
       symbol: r.genes?.[0]?.geneName?.value,

@@ -8,28 +8,18 @@ const container = document.getElementById('root');
 if (container) {
   const global = window as any;
   
-  // Initialize a global WeakMap to store roots for DOM elements
-  if (!global.__REACT_ROOT_MAP__) {
-    global.__REACT_ROOT_MAP__ = new WeakMap();
-  }
-  
-  let root = global.__REACT_ROOT_MAP__.get(container);
-  
-  if (!root) {
+  // Use a global property to store the root to ensure it's only created once
+  // even if this script is re-executed (e.g. during HMR or multiple loads)
+  if (!global.__REACT_ROOT__) {
     try {
-      root = createRoot(container);
-      global.__REACT_ROOT_MAP__.set(container, root);
+      global.__REACT_ROOT__ = createRoot(container);
     } catch (e) {
-      console.warn('Failed to create root, attempting to reuse existing one if possible', e);
-      // If createRoot fails, it's likely already created. 
-      // We try to fallback to a global property if the WeakMap failed us.
-      root = global.__REACT_ROOT__;
+      console.warn('createRoot failed, likely already initialized', e);
     }
   }
   
-  // Also store in a simple global for extra redundancy
-  global.__REACT_ROOT__ = root;
-
+  const root = global.__REACT_ROOT__;
+  
   if (root) {
     root.render(
       <StrictMode>

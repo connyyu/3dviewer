@@ -74,7 +74,7 @@ export const SequenceSchematic: React.FC<SequenceSchematicProps> = ({
         )}
 
         {/* Variant Markers */}
-        {showVariants && variants.map((v, idx) => {
+        {showVariants && Array.isArray(variants) && variants.map((v, idx) => {
           const isSelected = selectedVariant?.id === v.id;
           const pos = getPercentage(v.position);
           const isMultiResidue = v.end && v.end !== v.position;
@@ -124,7 +124,7 @@ export const SequenceSchematic: React.FC<SequenceSchematicProps> = ({
             )}
           </div>
           
-          {plddtScores && plddtScores.length > 0 ? (
+          {plddtScores && Array.isArray(plddtScores) && plddtScores.length > 0 ? (
             <div className="space-y-1">
               {plddtScores.map((scores, idx) => (
                 <div key={idx} className="relative h-2 w-full bg-gray-200 rounded-sm overflow-hidden flex border border-[#141414]/10">

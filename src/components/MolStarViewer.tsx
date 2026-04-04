@@ -40,6 +40,7 @@ export const MolStarViewer: React.FC<MolStarViewerProps> = ({
   const pluginInstance = useRef<any>(null);
   const isReady = useRef(false);
   const mounted = useRef(true);
+  const chainIds = useRef<string[]>([]);
 
   const onSelectResidueRef = useRef(onSelectResidue);
   useEffect(() => {
@@ -66,7 +67,7 @@ export const MolStarViewer: React.FC<MolStarViewerProps> = ({
       const data: any[] = [];
       const isPdb = provider?.toLowerCase().includes('pdb');
 
-      // Only apply custom coloring and selections to PDB structures
+      // Only apply base coloring to PDB structures
       // For AlphaFold DB and 3D-Beacons models, we keep the default coloring (e.g. pLDDT)
       if (isPdb) {
         // 1. Base Grey and Query Blue
@@ -108,89 +109,163 @@ export const MolStarViewer: React.FC<MolStarViewerProps> = ({
             color: { r: 37, g: 99, b: 235 },
           });
         }
+      }
 
-        // 2. Highlight Variant Red
-        if (highlightPosition) {
-          const highlight: any = {
-            color: { r: 220, g: 38, b: 38 },
-            focus: true,
-            sideChain: true,
-          };
+      // 2. Highlight Variant Red (Always, if present)
+      if (highlightPosition) {
+        const highlight: any = {
+          color: { r: 220, g: 38, b: 38 },
+          focus: true,
+          sideChain: true,
+        };
 
-          if (uniprotId) {
-            highlight.uniprot_accession = uniprotId;
-            highlight.uniprot_residue_number = highlightPosition;
-            data.push(highlight);
-            
-            if (uniprotId.includes('-')) {
-              data.push({
-                ...highlight,
-                uniprot_accession: uniprotId.split('-')[0],
-                focus: false,
+        // Calculate relative residue number if uniprotStart is present
+        const relativeResidueNumber = uniprotStart ? (highlightPosition - uniprotStart + 1) : highlightPosition;
+
+        if (uniprotId) {
+          // Base highlight using UniProt mapping
+          data.push({
+            ...highlight,
+            uniprot_accession: uniprotId,
+            uniprot_residue_number: highlightPosition,
+            // For non-PDB, don't focus via UniProt mapping if we have chain info
+            // as it can be ambiguous or fail in multimers
+            focus: isPdb || chainIds.current.length === 0
+          });
+          
+          // For non-PDB structures (like AlphaFold, Swiss-Model), also try direct residue number as a fallback
+          // This ensures zoom/center works even if UniProt mapping isn't active in the viewer
+          if (!isPdb) {
+            // If we have chain IDs, try to highlight the residue in ALL chains
+            if (chainIds.current.length > 0) {
+              // Determine which chain to focus on. User suggests 'A' as default.
+              const focusChain = chainIds.current.find(cid => cid === 'A') || 
+                                 chainIds.current.find(cid => cid.startsWith('A')) || 
+                                 chainIds.current[0];
+              
+              chainIds.current.forEach(cid => {
+                const isFocusChain = cid === focusChain;
+                // Try both absolute and relative positions to be safe
+                const positions = Array.from(new Set([highlightPosition, relativeResidueNumber])).filter(p => p > 0);
+                positions.forEach(pos => {
+                  // Add highlight for this chain
+                  data.push({
+                    ...highlight,
+                    struct_asym_id: cid,
+                    residue_number: pos,
+                    uniprot_accession: undefined,
+                    uniprot_residue_number: undefined,
+                    focus: isFocusChain // Only focus on the preferred chain
+                  });
+                  // Also try chain_id for older PDBe versions or different CIF mappings
+                  data.push({
+                    ...highlight,
+                    chain_id: cid,
+                    residue_number: pos,
+                    uniprot_accession: undefined,
+                    uniprot_residue_number: undefined,
+                    focus: isFocusChain
+                  });
+                });
+              });
+            } else {
+              // Fallback if chain IDs not yet extracted
+              const positions = Array.from(new Set([highlightPosition, relativeResidueNumber])).filter(p => p > 0);
+              positions.forEach(pos => {
+                data.push({
+                  ...highlight,
+                  residue_number: pos,
+                  uniprot_accession: undefined,
+                  uniprot_residue_number: undefined,
+                  focus: true // Fallback focus
+                });
               });
             }
-          } else {
-            highlight.residue_number = highlightPosition;
-            data.push(highlight);
           }
+          
+          if (uniprotId.includes('-')) {
+            data.push({
+              ...highlight,
+              uniprot_accession: uniprotId.split('-')[0],
+              focus: false,
+            });
+          }
+        } else {
+          highlight.residue_number = highlightPosition;
+          data.push(highlight);
+        }
+      }
+
+      // 3. Highlight Binder (Always, if present)
+      if (selectedBinder) {
+        let binderColor = { r: 249, g: 115, b: 22 }; // Default: Orange (Protein)
+        
+        if (selectedBinder.category === 'ligand') {
+          binderColor = { r: 16, g: 185, b: 129 }; // Green
+        } else if (selectedBinder.category === 'dna') {
+          binderColor = { r: 217, g: 70, b: 239 }; // Magenta
+        } else if (selectedBinder.category === 'rna') {
+          binderColor = { r: 220, g: 38, b: 38 }; // Red
         }
 
-        // 3. Highlight Binder
-        if (selectedBinder) {
-          let binderColor = { r: 249, g: 115, b: 22 }; // Default: Orange (Protein)
-          
-          if (selectedBinder.category === 'ligand') {
-            binderColor = { r: 16, g: 185, b: 129 }; // Green
-          } else if (selectedBinder.category === 'dna') {
-            binderColor = { r: 217, g: 70, b: 239 }; // Magenta
-          } else if (selectedBinder.category === 'rna') {
-            binderColor = { r: 220, g: 38, b: 38 }; // Red
-          }
+        const binderHighlight: any = {
+          color: binderColor,
+          focus: true,
+        };
 
-          const binderHighlight: any = {
-            color: binderColor,
-            focus: true,
-          };
-
-          if (selectedBinder.category === 'ligand') {
-            binderHighlight.label_comp_id = selectedBinder.id;
-            data.push(binderHighlight);
-          } else if (selectedBinder.category === 'protein' || selectedBinder.category === 'antibody') {
-            if (selectedBinder.entityId) {
-              data.push({
-                ...binderHighlight,
-                entity_id: String(selectedBinder.entityId)
-              });
-            }
-
+        if (selectedBinder.category === 'ligand') {
+          binderHighlight.label_comp_id = selectedBinder.id;
+          data.push(binderHighlight);
+        } else if (selectedBinder.category === 'protein' || selectedBinder.category === 'antibody') {
+          if (selectedBinder.entityId) {
             data.push({
               ...binderHighlight,
-              uniprot_accession: selectedBinder.id,
-              focus: !selectedBinder.entityId
+              entity_id: String(selectedBinder.entityId)
             });
-            
-            if (selectedBinder.id.includes('-')) {
-              const baseId = selectedBinder.id.split('-')[0];
-              data.push({
-                ...binderHighlight,
-                uniprot_accession: baseId,
-                focus: false
-              });
-            }
-          } else {
-            if (selectedBinder.entityId) {
-              binderHighlight.entity_id = String(selectedBinder.entityId);
-            } else {
-              binderHighlight.label_comp_id = selectedBinder.id;
-            }
-            data.push(binderHighlight);
           }
+
+          data.push({
+            ...binderHighlight,
+            uniprot_accession: selectedBinder.id,
+            focus: !selectedBinder.entityId
+          });
+          
+          if (selectedBinder.id.includes('-')) {
+            const baseId = selectedBinder.id.split('-')[0];
+            data.push({
+              ...binderHighlight,
+              uniprot_accession: baseId,
+              focus: false
+            });
+          }
+        } else {
+          if (selectedBinder.entityId) {
+            binderHighlight.entity_id = String(selectedBinder.entityId);
+          } else {
+            binderHighlight.label_comp_id = selectedBinder.id;
+          }
+          data.push(binderHighlight);
         }
       }
 
       pluginInstance.current.visual.clearSelection();
       if (data.length > 0) {
+        console.debug('MolStar Visual State Update:', { isPdb, highlightPosition, data });
         pluginInstance.current.visual.select({ data });
+        
+        // Explicitly focus on highlighted items for better zoom/center
+        const focusItems = data.filter(d => d.focus);
+        if (focusItems.length > 0) {
+          setTimeout(() => {
+            if (mounted.current && pluginInstance.current?.visual?.focus) {
+              try {
+                pluginInstance.current.visual.focus({ data: focusItems });
+              } catch (e) {
+                // Ignore focus errors
+              }
+            }
+          }, 100);
+        }
       }
     } catch (error) {
       console.error('Error updating MolStar visual state:', error);
@@ -244,40 +319,50 @@ export const MolStarViewer: React.FC<MolStarViewerProps> = ({
         isReady.current = true;
         applyVisualState();
 
-        // Extract pLDDT from B-factors if it's an AlphaFold model
-        const isAlphaFold = url.includes('alphafold') || provider?.toLowerCase().includes('alphafold');
-        if (isAlphaFold && onPlddtExtractedRef.current) {
-          try {
-            // Access underlying Mol* plugin context
-            const plugin = pluginInstance.current.plugin || pluginInstance.current.viewerInstance?.plugin;
-            if (plugin) {
-              const structures = plugin.managers.structure.hierarchy.current.structures;
-              if (structures.length > 0) {
-                // Try to get the model from the structure hierarchy
-                const structureRef = structures[0];
-                const structure = structureRef.cell.obj?.data;
-                // In Mol*, a structure can have multiple models, but usually it's just one
-                const model = structure?.models?.[0] || structureRef.model;
-                
-                if (model && model.atomicConformation && model.atomicConformation.B_iso_or_equiv) {
+        // Extract structure information (chains, pLDDT)
+        try {
+          // Access underlying Mol* plugin context
+          const plugin = pluginInstance.current.plugin || pluginInstance.current.viewerInstance?.plugin;
+          if (plugin) {
+            const structures = plugin.managers.structure.hierarchy.current.structures;
+            if (structures.length > 0) {
+              // Try to get the model from the structure hierarchy
+              const structureRef = structures[0];
+              const structure = structureRef.cell.obj?.data;
+              // In Mol*, a structure can have multiple models, but usually it's just one
+              const model = structure?.models?.[0] || structureRef.model;
+              
+              if (model) {
+                // 1. Extract Chain IDs for all models to support multi-chain selection/zoom
+                const chainCount = model.atomicHierarchy.chainAtomSegments.count;
+                const extractedChains: string[] = [];
+                for (let c = 0; c < chainCount; c++) {
+                  const labelId = model.atomicHierarchy.chains.label_asym_id.value(c);
+                  const authId = model.atomicHierarchy.chains.auth_asym_id.value(c);
+                  if (labelId) extractedChains.push(labelId);
+                  if (authId && authId !== labelId) extractedChains.push(authId);
+                }
+                chainIds.current = Array.from(new Set(extractedChains));
+                console.debug('Extracted Chain IDs for focus:', chainIds.current);
+
+                // 2. Extract pLDDT from B-factors if it's an AlphaFold model
+                const isAlphaFold = url.includes('alphafold') || provider?.toLowerCase().includes('alphafold');
+                if (isAlphaFold && onPlddtExtractedRef.current && model.atomicConformation && model.atomicConformation.B_iso_or_equiv) {
                   const bFactors = model.atomicConformation.B_iso_or_equiv;
                   const residueIndex = model.atomicHierarchy.residueAtomSegments.index;
                   const residueCount = model.atomicHierarchy.residueAtomSegments.count;
-                  const chainIndex = model.atomicHierarchy.chainAtomSegments.index;
-                  const chainCount = model.atomicHierarchy.chainAtomSegments.count;
                   
                   // Map residue to chain
                   const residueToChain = new Int32Array(residueCount);
                   for (let i = 0; i < model.atomicHierarchy.residueAtomSegments.count; i++) {
                     const firstAtom = model.atomicHierarchy.residueAtomSegments.offsets[i];
-                    residueToChain[i] = chainIndex[firstAtom];
+                    residueToChain[i] = model.atomicHierarchy.chainAtomSegments.index[firstAtom];
                   }
 
                   const chainResults: { chainId: string, scores: number[] }[] = [];
                   
                   for (let c = 0; c < chainCount; c++) {
-                    const chainId = model.atomicHierarchy.chains.label_asym_id.value(c);
-                    const chainResidueOffsets = model.atomicHierarchy.residueAtomSegments.offsets;
+                    const chainId = extractedChains[c];
                     
                     // Find residues in this chain
                     const chainAtomsStart = model.atomicHierarchy.chainAtomSegments.offsets[c];
@@ -314,23 +399,17 @@ export const MolStarViewer: React.FC<MolStarViewerProps> = ({
                   }
                   
                   if (chainResults.length > 0) {
-                    console.debug('Extracted pLDDT per chain:', chainResults.map(c => `${c.chainId}: ${c.scores.length}`).join(', '));
                     onPlddtExtractedRef.current(chainResults);
                   }
-                } else {
-                  console.debug('MolStar: Model or atomicConformation not found for pLDDT extraction');
-                  if (model) {
-                    console.debug('Model exists but missing data:', {
-                      hasConformation: !!model.atomicConformation,
-                      hasBFactors: !!model.atomicConformation?.B_iso_or_equiv
-                    });
-                  }
                 }
+                
+                // Re-apply visual state now that we have chain IDs and structure info
+                applyVisualState();
               }
             }
-          } catch (e) {
-            console.error('Error extracting pLDDT from MolStar:', e);
           }
+        } catch (e) {
+          console.error('Error extracting structure info:', e);
         }
 
         // Robust event extraction logic

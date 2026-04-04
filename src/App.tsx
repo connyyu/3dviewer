@@ -231,7 +231,7 @@ export default function App() {
   }, [selectedStructure, residueConfidence]);
 
   const plddtScores = React.useMemo(() => {
-    if (extractedPlddt && extractedPlddt.length > 0) {
+    if (Array.isArray(extractedPlddt) && extractedPlddt.length > 0) {
       // For now, we'll return an array of score arrays
       return extractedPlddt.map(c => c.scores);
     }
@@ -271,7 +271,7 @@ export default function App() {
           </button>
 
           {/* Search Results Dropdown */}
-          {results.length > 0 && (
+          {Array.isArray(results) && results.length > 0 && (
             <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-[#141414] z-50 shadow-xl">
               {results.map((r) => (
                 <button
@@ -405,7 +405,7 @@ export default function App() {
                   <div className="flex items-center justify-center py-8">
                     <Loader2 className="w-6 h-6 animate-spin opacity-20" />
                   </div>
-                ) : structures.length > 0 ? (
+                ) : (Array.isArray(structures) && structures.length > 0) ? (
                   <div className="space-y-2">
                     {structures
                       .filter(s => {
@@ -640,7 +640,7 @@ export default function App() {
                     <div className="flex items-center justify-center py-8">
                       <Loader2 className="w-6 h-6 animate-spin opacity-20" />
                     </div>
-                  ) : variants.length > 0 ? (
+                  ) : (Array.isArray(variants) && variants.length > 0) ? (
                     <div className="space-y-2">
                       {variants
                         .filter(v => v.disease && (diseaseFilter === 'all' || v.disease === diseaseFilter))
@@ -691,7 +691,7 @@ export default function App() {
                       <h2 className="text-sm uppercase tracking-widest font-bold italic font-serif">Binders</h2>
                     </div>
                     
-                    {binders.length > 0 && (
+                    {Array.isArray(binders) && binders.length > 0 && (
                       <div className="flex flex-col gap-3">
                         <div className="flex flex-col gap-1">
                           <label className="text-xs uppercase font-bold opacity-40">Filter by Category</label>
@@ -760,7 +760,7 @@ export default function App() {
                     <div className="flex items-center justify-center py-8">
                       <Loader2 className="w-6 h-6 animate-spin opacity-20" />
                     </div>
-                  ) : binders.length > 0 ? (
+                  ) : (Array.isArray(binders) && binders.length > 0) ? (
                     <div className="space-y-2">
                       {binders
                         .filter(b => (binderFilter === 'all' || b.category === binderFilter) && (binderIdFilter === 'all' || b.id === binderIdFilter))
