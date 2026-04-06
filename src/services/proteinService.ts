@@ -123,23 +123,25 @@ export async function getVariants(uniprotId: string): Promise<Variant[]> {
 export async function getBinders(pdbIds: string[], queryUniprot?: string): Promise<Binder[]> {
   const binders: Binder[] = [];
 
-  // Limit to first 15 PDBs to avoid overwhelming the browser/API
-  const limitedPdbIds = pdbIds.slice(0, 15);
+  // Limit to first 50 PDBs to avoid overwhelming the browser/API
+  const limitedPdbIds = pdbIds.slice(0, 50);
 
   const fetchForPdb = async (pdbId: string) => {
     const id = pdbId.toLowerCase();
+    const ID = pdbId.toUpperCase();
     const seenInThisPdb = new Set<string>();
     try {
       const [ligandsRes, moleculesRes, mappingsRes] = await Promise.all([
-        axios.get(`https://www.ebi.ac.uk/pdbe/api/pdb/entry/ligand_monomers/${id}`).catch(() => ({ data: {} })),
-        axios.get(`https://www.ebi.ac.uk/pdbe/api/pdb/entry/molecules/${id}`).catch(() => ({ data: {} })),
+        axios.get(`https://www.ebi.ac.uk/pdbe/api/v2/pdb/entry/ligand_monomers/${id}`).catch(() => ({ data: {} })),
+        axios.get(`https://www.ebi.ac.uk/pdbe/api/v2/pdb/entry/molecules/${id}`).catch(() => ({ data: {} })),
         axios.get(`https://www.ebi.ac.uk/pdbe/api/mappings/uniprot/${id}`).catch(() => ({ data: {} }))
       ]);
 
       // Create a map of entity_id to UniProt ID and Name from mappings API
       const entityToUniprot: Record<number, string> = {};
       const entityToUniprotName: Record<number, string> = {};
-      const pdbMappings = mappingsRes.data[id]?.UniProt || {};
+      const mappingsData = mappingsRes.data[id] || mappingsRes.data[ID] || {};
+      const pdbMappings = mappingsData.UniProt || {};
       Object.entries(pdbMappings).forEach(([uniprotId, mapping]: [string, any]) => {
         if (mapping.mappings) {
           mapping.mappings.forEach((m: any) => {
@@ -153,13 +155,22 @@ export async function getBinders(pdbIds: string[], queryUniprot?: string): Promi
         }
       });
 
-      const ligands = ligandsRes.data[id] || [];
+      const ligands = ligandsRes.data[id] || ligandsRes.data[ID] || [];
+      const ligandNameMap: Record<string, string> = {};
+      
       ligands.forEach((l: any) => {
-        const key = `${l.chem_comp_id}_ligand`;
+        const chemCompId = l.chem_comp_id;
+        const chemCompName = l.chem_comp_name;
+        
+        if (chemCompName) {
+          ligandNameMap[chemCompName.toLowerCase()] = chemCompId;
+        }
+        
+        const key = `${chemCompId}_ligand`;
         if (!seenInThisPdb.has(key)) {
           binders.push({
-            id: l.chem_comp_id,
-            name: l.chem_comp_name,
+            id: chemCompId,
+            name: chemCompName || chemCompId,
             category: 'ligand',
             pdbId: pdbId
           });
@@ -167,7 +178,7 @@ export async function getBinders(pdbIds: string[], queryUniprot?: string): Promi
         }
       });
 
-      const molecules = moleculesRes.data[id] || [];
+      const molecules = moleculesRes.data[id] || moleculesRes.data[ID] || [];
       molecules.forEach((m: any) => {
         // molecule_name and description are often arrays in PDBe API
         const rawName = m.molecule_name || m.description || '';
@@ -238,6 +249,55 @@ export async function getBinders(pdbIds: string[], queryUniprot?: string): Promi
               });
               seenInThisPdb.add(key);
             }
+          } else if (m.chem_comp_id || m.molecule_type === 'bound' || m.molecule_type === 'saccharide') {
+            // If it's a protein/polypeptide but doesn't have a UniProt ID, 
+            // check if it has a chem_comp_id (could be a synthetic peptide ligand)
+            let chemCompId = Array.isArray(m.chem_comp_id) ? m.chem_comp_id[0] : m.chem_comp_id;
+            
+            // Try to find it by name match from ligand_monomers
+            if (!chemCompId && molName) {
+              const nameLower = molName.toLowerCase();
+              if (ligandNameMap[nameLower]) {
+                chemCompId = ligandNameMap[nameLower];
+              }
+            }
+            
+            const finalId = chemCompId || (Array.isArray(m.molecule_name) ? m.molecule_name[0] : m.molecule_name) || `ENT_${m.entity_id}`;
+            const key = `${finalId}_ligand`;
+            
+            if (!seenInThisPdb.has(key)) {
+              binders.push({
+                id: String(finalId),
+                name: molName,
+                category: 'ligand',
+                pdbId: pdbId
+              });
+              seenInThisPdb.add(key);
+            }
+          }
+        } else if (m.chem_comp_id || m.molecule_type === 'bound' || m.molecule_type === 'saccharide') {
+          // Small molecule ligand from molecules API (fallback for ligand_monomers)
+          let chemCompId = Array.isArray(m.chem_comp_id) ? m.chem_comp_id[0] : m.chem_comp_id;
+          
+          // Try to find it by name match from ligand_monomers
+          if (!chemCompId && molName) {
+            const nameLower = molName.toLowerCase();
+            if (ligandNameMap[nameLower]) {
+              chemCompId = ligandNameMap[nameLower];
+            }
+          }
+          
+          const finalId = chemCompId || (Array.isArray(m.molecule_name) ? m.molecule_name[0] : m.molecule_name) || `ENT_${m.entity_id}`;
+          const key = `${finalId}_ligand`;
+          
+          if (!seenInThisPdb.has(key)) {
+            binders.push({
+              id: String(finalId),
+              name: molName,
+              category: 'ligand',
+              pdbId: pdbId
+            });
+            seenInThisPdb.add(key);
           }
         } else if (
           molNameLower.includes('dna') || 

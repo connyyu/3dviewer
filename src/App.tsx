@@ -83,7 +83,7 @@ export default function App() {
   const [variants, setVariants] = useState<Variant[]>([]);
   const [diseaseFilter, setDiseaseFilter] = useState<string>('all');
   const [binders, setBinders] = useState<Binder[]>([]);
-  const [binderFilter, setBinderFilter] = useState<string>('protein');
+  const [binderFilter, setBinderFilter] = useState<string>('all');
   const [binderIdFilter, setBinderIdFilter] = useState<string>('all');
   const [selectedBinder, setSelectedBinder] = useState<Binder | null>(null);
   const [rightPanelType, setRightPanelType] = useState<'variants' | 'binders'>('binders');
@@ -92,11 +92,33 @@ export default function App() {
   const [searching, setSearching] = useState(false);
   const [resetCounter, setResetCounter] = useState(0);
   const [extractedPlddt, setExtractedPlddt] = useState<{ chainId: string, scores: number[] }[] | null>(null);
+  const [structurePdbSearch, setStructurePdbSearch] = useState('');
 
   // Clear extracted pLDDT when structure changes
   useEffect(() => {
     setExtractedPlddt(null);
   }, [selectedStructure]);
+
+  // Fetch binders for selected structure if missing
+  useEffect(() => {
+    if (selectedStructure && selectedStructure.provider?.toLowerCase().includes('pdb')) {
+      const pdbId = selectedStructure.modelId;
+      const alreadyFetched = binders.some(b => b.pdbId === pdbId);
+      if (!alreadyFetched && selectedProtein) {
+        getBinders([pdbId], selectedProtein.uniprotId).then(newBinders => {
+          if (newBinders.length > 0) {
+            setBinders(prev => {
+              // Avoid duplicates
+              const existingKeys = new Set(prev.map(b => `${b.pdbId}_${b.id}_${b.category}`));
+              const filteredNew = newBinders.filter(b => !existingKeys.has(`${b.pdbId}_${b.id}_${b.category}`));
+              return [...prev, ...filteredNew];
+            });
+          }
+        });
+      }
+    }
+  }, [selectedStructure, selectedProtein]);
+
   const [isMobile, setIsMobile] = useState(false);
   const [residueConfidence, setResidueConfidence] = useState<Record<string, number[]>>({});
 
@@ -353,11 +375,11 @@ export default function App() {
                   <Info className="w-3 h-3" />
                   <h2 className="text-sm uppercase tracking-widest font-bold italic font-serif">Protein</h2>
                 </div>
-                <div className="space-y-4">
+                <div className="space-y-2">
                   <div>
-                    <label className="text-xs uppercase opacity-50 block mb-1">UniProt Accession</label>
-                    <div className="flex items-center gap-2">
-                      <div className="font-mono text-lg font-bold">{selectedProtein.uniprotId}</div>
+                    <label className="text-[10px] uppercase opacity-50 font-bold block">UniProt accession</label>
+                    <div className="flex items-center gap-1.5">
+                      <div className="font-mono text-sm font-bold">{selectedProtein.uniprotId}</div>
                       <a 
                         href={`https://www.uniprot.org/uniprotkb/${selectedProtein.uniprotId}/entry`}
                         target="_blank"
@@ -365,21 +387,21 @@ export default function App() {
                         className="text-[#141414]/40 hover:text-[#141414] transition-colors"
                         title="View on UniProt"
                       >
-                        <ExternalLink className="w-4 h-4" />
+                        <ExternalLink className="w-3 h-3" />
                       </a>
                     </div>
                   </div>
                   <div>
-                    <label className="text-xs uppercase opacity-50 block mb-1">Gene ID</label>
-                    <div className="text-md font-bold">{selectedProtein.symbol || 'N/A'}</div>
+                    <label className="text-[10px] uppercase opacity-50 font-bold block">Gene ID</label>
+                    <div className="text-sm font-bold">{selectedProtein.symbol || 'N/A'}</div>
                   </div>
                   <div>
-                    <label className="text-xs uppercase opacity-50 block mb-1">name</label>
-                    <div className="text-sm leading-relaxed">{selectedProtein.name}</div>
+                    <label className="text-[10px] uppercase opacity-50 font-bold block">Name</label>
+                    <div className="text-sm font-normal leading-snug">{selectedProtein.name}</div>
                   </div>
                   <div>
-                    <label className="text-xs uppercase opacity-50 block mb-1">Organism</label>
-                    <div className="text-sm italic">{selectedProtein.organism}</div>
+                    <label className="text-[10px] uppercase opacity-50 font-bold block">Organism</label>
+                    <div className="text-sm font-normal italic">{selectedProtein.organism}</div>
                   </div>
                 </div>
               </section>
@@ -401,6 +423,42 @@ export default function App() {
                     <option value="others">Others</option>
                   </select>
                 </div>
+
+                <div className="mb-4">
+                  <div className="relative group">
+                    <input
+                      type="text"
+                      placeholder="Search PDB ID (e.g. 5t35)"
+                      className="w-full text-xs bg-transparent border border-[#141414]/20 px-2 py-1.5 pr-12 focus:outline-none focus:border-[#141414] placeholder:text-[#141414]/30"
+                      value={structurePdbSearch}
+                      onChange={(e) => {
+                        const val = e.target.value.toLowerCase();
+                        setStructurePdbSearch(val);
+                        if (val.length === 4) {
+                          const match = structures.find(s => s.modelId.toLowerCase() === val && s.provider?.toLowerCase().includes('pdb'));
+                          if (match) {
+                            setSelectedStructure(match);
+                            setSelectedVariant(null);
+                            setSelectedBinder(null);
+                          }
+                        }
+                      }}
+                    />
+                    <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                      {structurePdbSearch && (
+                        <button 
+                          onClick={() => setStructurePdbSearch('')}
+                          className="p-0.5 hover:bg-gray-100 rounded transition-colors"
+                          title="Clear search"
+                        >
+                          <span className="text-[10px] font-bold">✕</span>
+                        </button>
+                      )}
+                      <Search className="w-3 h-3 opacity-20" />
+                    </div>
+                  </div>
+                </div>
+
                 {loading ? (
                   <div className="flex items-center justify-center py-8">
                     <Loader2 className="w-6 h-6 animate-spin opacity-20" />
@@ -409,6 +467,9 @@ export default function App() {
                   <div className="space-y-2">
                     {structures
                       .filter(s => {
+                        if (structurePdbSearch.trim()) {
+                          return s.modelId.toLowerCase().includes(structurePdbSearch.toLowerCase()) && s.provider?.toLowerCase().includes('pdb');
+                        }
                         if (structureFilter === 'all') return true;
                         const provider = s.provider?.toLowerCase() || '';
                         if (structureFilter === 'pdb') return provider.includes('pdb');
@@ -643,7 +704,29 @@ export default function App() {
                   ) : (Array.isArray(variants) && variants.length > 0) ? (
                     <div className="space-y-2">
                       {variants
-                        .filter(v => v.disease && (diseaseFilter === 'all' || v.disease === diseaseFilter))
+                        .filter(v => {
+                          const matchesDisease = v.disease && (diseaseFilter === 'all' || v.disease === diseaseFilter);
+                          
+                          // If PDB search is active, only show variants covered by matching structures
+                          if (structurePdbSearch.trim()) {
+                            const matchingStructures = structures.filter(s => 
+                              s.modelId.toLowerCase().includes(structurePdbSearch.toLowerCase()) && 
+                              s.provider?.toLowerCase().includes('pdb')
+                            );
+                            
+                            if (matchingStructures.length > 0) {
+                              return matchesDisease && matchingStructures.some(s => {
+                                if (s.uniprotStart === undefined || s.uniprotEnd === undefined) return true; // Show if range unknown
+                                return v.position >= s.uniprotStart && v.position <= s.uniprotEnd;
+                              });
+                            } else {
+                              // If search is active but no structures match, show nothing
+                              return false;
+                            }
+                          }
+                          
+                          return matchesDisease;
+                        })
                         .map((v, idx) => {
                           const isMultiResidue = v.end && v.end !== v.position;
                         const isSelected = selectedVariant?.id === v.id;
@@ -703,6 +786,7 @@ export default function App() {
                               setBinderIdFilter('all'); // Reset ID filter when category changes
                             }}
                           >
+                            <option value="all">ALL CATEGORIES ({binders.length})</option>
                             {Array.from(new Set(binders.map(b => b.category)))
                               .sort((a, b) => {
                                 const order = ['protein', 'ligand', 'dna', 'rna'];
@@ -763,7 +847,12 @@ export default function App() {
                   ) : (Array.isArray(binders) && binders.length > 0) ? (
                     <div className="space-y-2">
                       {binders
-                        .filter(b => (binderFilter === 'all' || b.category === binderFilter) && (binderIdFilter === 'all' || b.id === binderIdFilter))
+                        .filter(b => {
+                          const matchesPdb = !structurePdbSearch.trim() || b.pdbId.toLowerCase().includes(structurePdbSearch.toLowerCase());
+                          const matchesCat = binderFilter === 'all' || b.category === binderFilter;
+                          const matchesId = binderIdFilter === 'all' || b.id === binderIdFilter;
+                          return matchesPdb && matchesCat && matchesId;
+                        })
                         .map((b, idx) => {
                           const isSelected = selectedStructure?.modelId === b.pdbId && selectedBinder?.id === b.id;
                           
@@ -818,8 +907,9 @@ export default function App() {
                                   {b.category.toUpperCase()}
                                 </span>
                               </div>
-                              <div className="font-mono text-sm truncate">{b.symbol || b.name}</div>
-                              {b.symbol && <div className="text-xs opacity-60 mt-1 leading-tight">{b.name}</div>}
+                              <div className="font-mono text-sm truncate">{b.category === 'ligand' ? b.id : (b.symbol || b.name)}</div>
+                              {b.category !== 'ligand' && b.symbol && <div className="text-xs opacity-60 mt-1 leading-tight">{b.name}</div>}
+                              {b.category === 'ligand' && <div className="text-xs opacity-60 mt-1 leading-tight truncate">{b.name}</div>}
                               <div className="flex justify-between items-end mt-2">
                                 <div className="text-[10px] opacity-40 uppercase tracking-widest">PDB_0000{b.pdbId.toUpperCase()}</div>
                                 {b.category === 'protein' && b.organism && (

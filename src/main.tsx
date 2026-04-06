@@ -3,22 +3,20 @@ import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 
-const container = document.getElementById('root');
+const container = document.getElementById('root') as any;
 
 if (container) {
-  const global = window as any;
-  
-  // Use a global property to store the root to ensure it's only created once
-  // even if this script is re-executed (e.g. during HMR or multiple loads)
-  if (!global.__REACT_ROOT__) {
+  // Store the root on the container element itself to ensure it's only created once
+  // even if the script environment is reset but the DOM is preserved.
+  if (!container._reactRoot) {
     try {
-      global.__REACT_ROOT__ = createRoot(container);
+      container._reactRoot = createRoot(container);
     } catch (e) {
       console.warn('createRoot failed, likely already initialized', e);
     }
   }
   
-  const root = global.__REACT_ROOT__;
+  const root = container._reactRoot;
   
   if (root) {
     root.render(
